@@ -77,13 +77,39 @@ load_prebuilt_image() {
     exit 1
   fi
 
-  if ! command -v gzip >/dev/null 2>&1; then
-    echo "[ERROR] gzip is required to unpack the prebuilt Remote-S image." >&2
+  if ! command -v tar >/dev/null 2>&1; then
+    echo "[ERROR] tar is required to unpack the prebuilt Remote-S image." >&2
     exit 1
   fi
 
+  local temp_dir
+  local archive_path
+  local extract_dir
+  local inner_tar
+  local repacked_tar
+
+  temp_dir="$(mktemp -d /tmp/remote-s-prebuilt.XXXXXX)"
+  archive_path="${temp_dir}/${PREBUILT_ASSET}"
+  extract_dir="${temp_dir}/extract"
+  repacked_tar="${temp_dir}/docker-archive.tar"
+  mkdir -p "${extract_dir}"
+
   echo "[INFO] Loading prebuilt image ${PREBUILT_IMAGE_NAME} from ${PREBUILT_TAR_URL}"
-  curl -fsSL "${PREBUILT_TAR_URL}" | gzip -dc | docker load
+  curl -fsSL "${PREBUILT_TAR_URL}" -o "${archive_path}"
+
+  if tar -xzf "${archive_path}" -C "${extract_dir}" >/dev/null 2>&1; then
+    inner_tar="$(find "${extract_dir}" -maxdepth 2 -type f -name '*.tar' | head -n 1 || true)"
+    if [[ -n "${inner_tar}" ]]; then
+      docker load -i "${inner_tar}"
+    else
+      tar -cf "${repacked_tar}" -C "${extract_dir}" .
+      docker load -i "${repacked_tar}"
+    fi
+  else
+    docker load -i "${archive_path}"
+  fi
+
+  rm -rf "${temp_dir}"
   IMAGE_NAME="${PREBUILT_IMAGE_NAME}"
 }
 
