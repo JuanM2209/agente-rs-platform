@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 )
 
@@ -44,13 +45,15 @@ type AgentHub struct {
 	mu      sync.RWMutex
 	agents  map[string]*AgentConn // keyed by DeviceID
 	secret  string
+	db      *pgxpool.Pool
 }
 
 // NewAgentHub constructs an AgentHub with the provided authentication secret.
-func NewAgentHub(secret string) *AgentHub {
+func NewAgentHub(secret string, db *pgxpool.Pool) *AgentHub {
 	return &AgentHub{
 		agents: make(map[string]*AgentConn),
 		secret: secret,
+		db:     db,
 	}
 }
 
@@ -85,6 +88,7 @@ func (h *AgentHub) Unregister(conn *AgentConn) {
 			Str("device_id", conn.DeviceID).
 			Str("conn_id", conn.ConnID).
 			Msg("agent unregistered")
+		h.touchDevice(conn.DeviceID, "offline", time.Now().UTC(), nil)
 	}
 }
 
@@ -202,21 +206,208 @@ func (c *AgentConn) readPump(ctx context.Context, cancel context.CancelFunc) {
 			return
 		}
 
-		var ack AgentAck
-		if jsonErr := json.Unmarshal(message, &ack); jsonErr == nil && ack.ID != "" {
+		var msg AgentMessage
+		if jsonErr := json.Unmarshal(message, &msg); jsonErr != nil {
+			log.Warn().Err(jsonErr).Str("device_id", c.DeviceID).Msg("failed to decode agent message")
+			continue
+		}
+
+		switch msg.Type {
+		case EventAck:
+			var ack AgentAck
+			if jsonErr := json.Unmarshal(msg.Payload, &ack); jsonErr != nil {
+				log.Warn().Err(jsonErr).Str("device_id", c.DeviceID).Msg("failed to decode agent ack payload")
+				continue
+			}
 			log.Debug().
 				Str("device_id", c.DeviceID).
 				Str("msg_id", ack.ID).
 				Bool("success", ack.Success).
+				Str("error", ack.Error).
 				Msg("received agent ack")
+		default:
+			c.hub.handleAgentEvent(c, msg)
+		}
+	}
+}
+
+type inventoryEventPayload struct {
+	Endpoints []struct {
+		Port       int    `json:"port,omitempty"`
+		Protocol   string `json:"protocol,omitempty"`
+		Type       string `json:"type"`
+		Label      string `json:"label"`
+		SerialPort string `json:"serial_port,omitempty"`
+	} `json:"endpoints"`
+	Capabilities []string  `json:"capabilities"`
+	ScannedAt    time.Time `json:"scanned_at"`
+}
+
+func (h *AgentHub) handleAgentEvent(conn *AgentConn, msg AgentMessage) {
+	switch msg.Type {
+	case EventRegistration:
+		var payload RegistrationMessage
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			log.Warn().Err(err).Str("device_id", conn.DeviceID).Msg("invalid registration payload")
+			return
+		}
+		h.touchDevice(conn.DeviceID, "online", time.Now().UTC(), nil)
+		log.Info().
+			Str("device_id", conn.DeviceID).
+			Str("tenant_id", payload.TenantID).
+			Str("version", payload.Version).
+			Msg("agent registration received")
+
+	case EventHeartbeat:
+		var payload HeartbeatPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			log.Warn().Err(err).Str("device_id", conn.DeviceID).Msg("invalid heartbeat payload")
+			return
+		}
+		h.touchDevice(conn.DeviceID, "online", payload.Timestamp.UTC(), nil)
+
+	case EventInventoryUpdate:
+		var payload inventoryEventPayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			log.Warn().Err(err).Str("device_id", conn.DeviceID).Msg("invalid inventory payload")
+			return
+		}
+		if payload.ScannedAt.IsZero() {
+			payload.ScannedAt = time.Now().UTC()
+		}
+		if err := h.persistInventory(conn.DeviceID, payload); err != nil {
+			log.Warn().Err(err).Str("device_id", conn.DeviceID).Msg("failed to persist inventory update")
+			return
+		}
+		log.Info().
+			Str("device_id", conn.DeviceID).
+			Int("endpoints", len(payload.Endpoints)).
+			Msg("inventory update persisted")
+
+	case EventMBUSDStarted, EventMBUSDStopped, EventSessionStarted, EventSessionStopped:
+		log.Info().
+			Str("device_id", conn.DeviceID).
+			Str("event_type", string(msg.Type)).
+			RawJSON("payload", msg.Payload).
+			Msg("agent event received")
+
+	default:
+		log.Debug().
+			Str("device_id", conn.DeviceID).
+			Str("event_type", string(msg.Type)).
+			RawJSON("payload", msg.Payload).
+			Msg("unhandled agent event")
+	}
+}
+
+func (h *AgentHub) persistInventory(deviceStringID string, payload inventoryEventPayload) error {
+	if h.db == nil {
+		return nil
+	}
+
+	var internalID string
+	if err := h.db.QueryRow(context.Background(), `SELECT id FROM devices WHERE device_id = $1 LIMIT 1`, deviceStringID).Scan(&internalID); err != nil {
+		return err
+	}
+
+	h.touchDevice(deviceStringID, "online", time.Now().UTC(), &payload.ScannedAt)
+
+	for _, ep := range payload.Endpoints {
+		if ep.Type == "BRIDGE" && ep.SerialPort != "" {
+			if err := h.ensureBridgeProfile(internalID, ep.SerialPort); err != nil {
+				log.Warn().Err(err).Str("device_id", deviceStringID).Str("serial_port", ep.SerialPort).Msg("failed to ensure bridge profile")
+			}
 			continue
 		}
 
-		log.Debug().
-			Str("device_id", c.DeviceID).
-			RawJSON("message", message).
-			Msg("received agent message")
+		if ep.Port <= 0 {
+			continue
+		}
+
+		protocol := ep.Protocol
+		if protocol == "" {
+			protocol = "tcp"
+		}
+
+		const upsertEndpoint = `
+			INSERT INTO endpoints
+				(id, device_id, type, port, label, protocol, description, enabled, discovered_at, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, NULL, true, $7, NOW())
+			ON CONFLICT (device_id, port)
+			DO UPDATE SET
+				type = EXCLUDED.type,
+				label = EXCLUDED.label,
+				protocol = EXCLUDED.protocol,
+				enabled = true,
+				discovered_at = EXCLUDED.discovered_at`
+
+		if _, err := h.db.Exec(
+			context.Background(),
+			upsertEndpoint,
+			uuid.New().String(),
+			internalID,
+			ep.Type,
+			ep.Port,
+			ep.Label,
+			protocol,
+			payload.ScannedAt.UTC(),
+		); err != nil {
+			log.Warn().Err(err).Str("device_id", deviceStringID).Int("port", ep.Port).Msg("failed to upsert endpoint")
+		}
 	}
+
+	return nil
+}
+
+func (h *AgentHub) ensureBridgeProfile(deviceInternalID, serialPort string) error {
+	if h.db == nil {
+		return nil
+	}
+
+	var existingID string
+	err := h.db.QueryRow(
+		context.Background(),
+		`SELECT id FROM bridge_profiles WHERE device_id = $1 AND serial_port = $2 LIMIT 1`,
+		deviceInternalID,
+		serialPort,
+	).Scan(&existingID)
+	if err == nil {
+		return nil
+	}
+
+	const insertQ = `
+		INSERT INTO bridge_profiles
+			(id, device_id, serial_port, baud_rate, parity, stop_bits, data_bits, tcp_port, status, created_at)
+		VALUES ($1, $2, $3, 9600, 'N', 1, 8, NULL, 'idle', NOW())`
+
+	_, err = h.db.Exec(context.Background(), insertQ, uuid.New().String(), deviceInternalID, serialPort)
+	return err
+}
+
+func (h *AgentHub) touchDevice(deviceStringID, status string, lastSeen time.Time, inventoryUpdatedAt *time.Time) {
+	if h.db == nil {
+		return
+	}
+
+	if inventoryUpdatedAt != nil {
+		_, _ = h.db.Exec(
+			context.Background(),
+			`UPDATE devices SET status = $1, last_seen = $2, inventory_updated_at = $3, updated_at = NOW() WHERE device_id = $4`,
+			status,
+			lastSeen,
+			inventoryUpdatedAt.UTC(),
+			deviceStringID,
+		)
+		return
+	}
+
+	_, _ = h.db.Exec(
+		context.Background(),
+		`UPDATE devices SET status = $1, last_seen = $2, updated_at = NOW() WHERE device_id = $3`,
+		status,
+		lastSeen,
+		deviceStringID,
+	)
 }
 
 // writePump delivers outbound messages to the agent and sends periodic pings.

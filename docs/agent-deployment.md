@@ -75,7 +75,10 @@ That file must be mounted into the container as read-only.
 - Use `--network host` on Linux if you want inventory discovery to reflect host listening ports
 - Mount `/data/nucleus/factory` read-only so the agent can read `nucleus_serial_number`
 - Add `--device` for each serial adapter you want MBUSD to use
-- If serial bridge support is needed, make sure `mbusd` is available inside the container PATH
+- The current Nucleus Modbus serial path is `/dev/ttymxc5`
+- The published `agente-rs` image bundles `mbusd` for ARMv7 Nucleus devices
+- If a user activates MBUSD on `/dev/ttymxc5`, Node-RED Modbus serial communication on that same port is interrupted until the bridge stops
+- On non-ARMv7 hosts, provide your own `mbusd` binary through `MBUSD_HOST_PATH` or a custom image
 
 ## Option A: Pull The Public Image Directly (Recommended)
 
@@ -89,6 +92,8 @@ AGENT_SECRET='YOUR_AGENT_SECRET' \
 TENANT_ID='test-org' \
 ./install-agente-rs.sh
 ```
+
+The installer defaults `SERIAL_DEVICE` to `/dev/ttymxc5`, which matches the current Modbus serial configuration on the Nucleus devices.
 
 ### Direct docker commands
 
@@ -111,16 +116,34 @@ docker run -d \
   ghcr.io/juanm2209/agente-rs:latest
 ```
 
-### If the device has a serial adapter
+### If the device has the Nucleus Modbus serial adapter
 
-Example with `/dev/ttyUSB0`:
+Example with `/dev/ttymxc5`:
 
 ```bash
 docker run -d \
   --name agente-rs \
   --restart unless-stopped \
   --network host \
-  --device /dev/ttyUSB0:/dev/ttyUSB0 \
+  --device /dev/ttymxc5:/dev/ttymxc5 \
+  -v /data/nucleus/factory:/data/nucleus/factory:ro \
+  -e CONTROL_PLANE_URL='wss://api.datadesng.com/ws/agent' \
+  -e AGENT_SECRET='YOUR_AGENT_SECRET' \
+  -e TENANT_ID='test-org' \
+  -e LOG_LEVEL='info' \
+  ghcr.io/juanm2209/agente-rs:latest
+```
+
+### If the device is not ARMv7
+
+Provide the working host binary explicitly:
+
+```bash
+docker run -d \
+  --name agente-rs \
+  --restart unless-stopped \
+  --network host \
+  --device /dev/ttymxc5:/dev/ttymxc5 \
   -v /data/nucleus/factory:/data/nucleus/factory:ro \
   -v /usr/local/bin/mbusd:/usr/local/bin/mbusd:ro \
   -e CONTROL_PLANE_URL='wss://api.datadesng.com/ws/agent' \
@@ -154,18 +177,17 @@ docker run -d \
   agente-rs:latest
 ```
 
-### If the device has a serial adapter
+### If the device has the Nucleus Modbus serial adapter
 
-Example with `/dev/ttyUSB0`:
+Example with `/dev/ttymxc5`:
 
 ```bash
 docker run -d \
   --name agente-rs \
   --restart unless-stopped \
   --network host \
-  --device /dev/ttyUSB0:/dev/ttyUSB0 \
+  --device /dev/ttymxc5:/dev/ttymxc5 \
   -v /data/nucleus/factory:/data/nucleus/factory:ro \
-  -v /usr/local/bin/mbusd:/usr/local/bin/mbusd:ro \
   -e CONTROL_PLANE_URL='wss://YOUR-API-DOMAIN/ws/agent' \
   -e AGENT_SECRET='YOUR_AGENT_SECRET' \
   -e TENANT_ID='test-org' \
@@ -245,11 +267,20 @@ cat /data/nucleus/factory/nucleus_serial_number
 Check that the serial device exists on the host:
 
 ```bash
-ls -l /dev/ttyUSB* /dev/ttyACM* /dev/ttyS*
+ls -l /dev/ttymxc5 /dev/ttyUSB* /dev/ttyACM* /dev/ttyS*
 ```
 
 Then make sure the matching `--device` flag is present in `docker run`.
-If you are using serial bridges, also mount or bake an `mbusd` binary into the image.
+For ARMv7 Nucleus devices, `mbusd` is already bundled in the published image.
+For other architectures, also mount or bake an `mbusd` binary into the image.
+
+### Node-RED loses serial Modbus while MBUSD is active
+
+This is expected in the current design.
+
+- MBUSD and Node-RED cannot safely use `/dev/ttymxc5` at the same time
+- The portal warns the operator before enabling the serial bridge
+- Stop the export session or stop the bridge from the portal to return serial ownership to Node-RED
 
 ### Agent connects but inventory looks empty
 

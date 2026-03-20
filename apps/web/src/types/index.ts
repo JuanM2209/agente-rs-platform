@@ -81,6 +81,9 @@ export interface DeviceInventory {
   capabilities: {
     has_serial: boolean;
     serial_ports: string[];
+    modbus_serial_port?: string;
+    activation_warning?: string;
+    bundled_bridge_binary?: string;
   };
   freshness: {
     last_scan: string;
@@ -139,6 +142,7 @@ export interface ExportHistory {
 export interface BridgeProfile {
   id: string;
   device_id: string;
+  endpoint_id?: string;
   serial_port: string;
   baud_rate: number;
   parity: string;

@@ -5,8 +5,10 @@ services:
     network_mode: host
     volumes:
       - /data/nucleus/factory:/data/nucleus/factory:ro
-      # Optional if serial bridge support is needed and mbusd exists on host:
+      # Optional only for non-ARMv7 devices that need a host-provided mbusd binary:
       # - /usr/local/bin/mbusd:/usr/local/bin/mbusd:ro
+    devices:
+      - /dev/ttymxc5:/dev/ttymxc5
     environment:
       CONTROL_PLANE_URL: "wss://api.datadesng.com/ws/agent"
       AGENT_SECRET: "replace-with-real-agent-secret"

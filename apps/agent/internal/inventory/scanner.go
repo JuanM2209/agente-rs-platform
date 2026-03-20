@@ -212,7 +212,7 @@ func parseProcNetTCP(path string) ([]int, error) {
 func serialDevices() ([]string, error) {
 	var devices []string
 
-	patterns := []string{"/dev/ttyS*", "/dev/ttyUSB*", "/dev/ttyACM*"}
+	patterns := []string{"/dev/ttyS*", "/dev/ttyUSB*", "/dev/ttyACM*", "/dev/ttymxc*"}
 	for _, pattern := range patterns {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {

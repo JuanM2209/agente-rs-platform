@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -50,6 +51,9 @@ func (h *Handler) StartModbusBridge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.SerialPort = strings.TrimSpace(req.SerialPort)
+	req.Parity = normalizeParity(req.Parity)
+
 	if req.SerialPort == "" {
 		writeJSON(w, http.StatusBadRequest, models.APIResponse{
 			Success: false,
@@ -61,6 +65,41 @@ func (h *Handler) StartModbusBridge(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, models.APIResponse{
 			Success: false,
 			Error:   "tcp_port is required",
+		})
+		return
+	}
+	if req.TCPPort < 1024 || req.TCPPort > 65535 {
+		writeJSON(w, http.StatusBadRequest, models.APIResponse{
+			Success: false,
+			Error:   "tcp_port must be between 1024 and 65535",
+		})
+		return
+	}
+	if req.BaudRate < 0 {
+		writeJSON(w, http.StatusBadRequest, models.APIResponse{
+			Success: false,
+			Error:   "baud_rate must be positive",
+		})
+		return
+	}
+	if req.DataBits != 0 && req.DataBits != 7 && req.DataBits != 8 {
+		writeJSON(w, http.StatusBadRequest, models.APIResponse{
+			Success: false,
+			Error:   "data_bits must be 7 or 8",
+		})
+		return
+	}
+	if req.StopBits != 0 && req.StopBits != 1 && req.StopBits != 2 {
+		writeJSON(w, http.StatusBadRequest, models.APIResponse{
+			Success: false,
+			Error:   "stop_bits must be 1 or 2",
+		})
+		return
+	}
+	if req.Parity != "N" && req.Parity != "E" && req.Parity != "O" {
+		writeJSON(w, http.StatusBadRequest, models.APIResponse{
+			Success: false,
+			Error:   "parity must be one of N, E or O",
 		})
 		return
 	}
@@ -104,17 +143,41 @@ func (h *Handler) StartModbusBridge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if active, lookupErr := h.activeBridgeForSerialPort(r.Context(), internalID, req.SerialPort); lookupErr != nil {
+		log.Error().Err(lookupErr).Str("device_id", deviceID).Msg("StartModbusBridge: active bridge lookup failed")
+		writeJSON(w, http.StatusInternalServerError, models.APIResponse{
+			Success: false,
+			Error:   "failed to validate active bridges",
+		})
+		return
+	} else if active {
+		writeJSON(w, http.StatusConflict, models.APIResponse{
+			Success: false,
+			Error:   "a serial bridge is already active on this serial port",
+		})
+		return
+	}
+
 	bridgeID := uuid.New().String()
 	now := time.Now().UTC()
+	endpointID, endpointErr := h.upsertBridgeEndpoint(r.Context(), internalID, req.SerialPort, req.TCPPort)
+	if endpointErr != nil {
+		log.Error().Err(endpointErr).Str("bridge_id", bridgeID).Msg("StartModbusBridge: endpoint upsert failed")
+		writeJSON(w, http.StatusInternalServerError, models.APIResponse{
+			Success: false,
+			Error:   "failed to prepare bridge endpoint",
+		})
+		return
+	}
 
 	const insertQ = `
 		INSERT INTO bridge_profiles
-			(id, device_id, serial_port, baud_rate, parity, stop_bits, data_bits, tcp_port, status, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+			(id, device_id, serial_port, baud_rate, parity, stop_bits, data_bits, tcp_port, status, last_started_at, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 
 	if _, dbErr := h.db.Exec(r.Context(), insertQ,
 		bridgeID, internalID, req.SerialPort, req.BaudRate,
-		req.Parity, req.StopBits, req.DataBits, req.TCPPort, "starting", now,
+		req.Parity, req.StopBits, req.DataBits, req.TCPPort, "active", now, now,
 	); dbErr != nil {
 		log.Error().Err(dbErr).Str("bridge_id", bridgeID).Msg("StartModbusBridge: db insert")
 		writeJSON(w, http.StatusInternalServerError, models.APIResponse{
@@ -153,13 +216,14 @@ func (h *Handler) StartModbusBridge(w http.ResponseWriter, r *http.Request) {
 	bridge := models.BridgeProfile{
 		ID:         bridgeID,
 		DeviceID:   internalID,
+		EndpointID: endpointID,
 		SerialPort: req.SerialPort,
 		BaudRate:   req.BaudRate,
 		Parity:     req.Parity,
 		StopBits:   req.StopBits,
 		DataBits:   req.DataBits,
 		TCPPort:    req.TCPPort,
-		Status:     "starting",
+		Status:     "active",
 		CreatedAt:  now,
 	}
 
@@ -191,7 +255,7 @@ func (h *Handler) StopBridge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const updateQ = `UPDATE bridge_profiles SET status = 'stopped' WHERE id = $1`
+	const updateQ = `UPDATE bridge_profiles SET status = 'idle' WHERE id = $1`
 	if _, dbErr := h.db.Exec(r.Context(), updateQ, bridgeID); dbErr != nil {
 		log.Error().Err(dbErr).Str("bridge_id", bridgeID).Msg("StopBridge: db update")
 		writeJSON(w, http.StatusInternalServerError, models.APIResponse{
@@ -199,6 +263,10 @@ func (h *Handler) StopBridge(w http.ResponseWriter, r *http.Request) {
 			Error:   "failed to update bridge status",
 		})
 		return
+	}
+
+	if _, dbErr := h.db.Exec(r.Context(), `UPDATE endpoints SET enabled = false WHERE device_id = $1 AND port = $2`, bridge.DeviceID, bridge.TCPPort); dbErr != nil {
+		log.Warn().Err(dbErr).Str("bridge_id", bridgeID).Msg("StopBridge: failed to disable bridge endpoint")
 	}
 
 	if deviceStringID != "" && h.hub.IsConnected(deviceStringID) {
@@ -248,6 +316,60 @@ func (h *Handler) fetchBridge(ctx context.Context, bridgeID, tenantID string) (*
 		&deviceStringID,
 	)
 	return bp, deviceStringID, err
+}
+
+func normalizeParity(raw string) string {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "E", "EVEN":
+		return "E"
+	case "O", "ODD":
+		return "O"
+	default:
+		return "N"
+	}
+}
+
+func (h *Handler) activeBridgeForSerialPort(ctx context.Context, deviceID, serialPort string) (bool, error) {
+	const q = `
+		SELECT EXISTS(
+			SELECT 1
+			FROM bridge_profiles
+			WHERE device_id = $1 AND serial_port = $2 AND status = 'active'
+		)`
+
+	var exists bool
+	if err := h.db.QueryRow(ctx, q, deviceID, serialPort).Scan(&exists); err != nil {
+		return false, err
+	}
+
+	return exists, nil
+}
+
+func (h *Handler) upsertBridgeEndpoint(ctx context.Context, deviceID, serialPort string, tcpPort int) (string, error) {
+	label := "Serial Modbus Bridge"
+	description := "Ephemeral MBUSD bridge for " + serialPort
+
+	const q = `
+		INSERT INTO endpoints
+			(id, device_id, type, port, label, protocol, description, enabled, discovered_at, created_at)
+		VALUES
+			($1, $2, 'BRIDGE', $3, $4, 'mbusd', $5, true, NOW(), NOW())
+		ON CONFLICT (device_id, port)
+		DO UPDATE SET
+			type = 'BRIDGE',
+			label = EXCLUDED.label,
+			protocol = EXCLUDED.protocol,
+			description = EXCLUDED.description,
+			enabled = true,
+			discovered_at = NOW()
+		RETURNING id`
+
+	endpointID := uuid.New().String()
+	if err := h.db.QueryRow(ctx, q, endpointID, deviceID, tcpPort, label, description).Scan(&endpointID); err != nil {
+		return "", err
+	}
+
+	return endpointID, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

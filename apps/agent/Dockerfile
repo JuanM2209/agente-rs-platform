@@ -2,6 +2,7 @@ FROM --platform=$BUILDPLATFORM golang:1.22-alpine AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
+ARG TARGETVARIANT
 
 WORKDIR /app
 
@@ -17,20 +18,25 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 # ---------------------------------------------------------------------------
 # Runtime image
 # ---------------------------------------------------------------------------
-FROM alpine:3.19
+FROM debian:bookworm-slim
 
-# ca-certificates: needed for TLS connections to the control plane
-# tzdata: proper timezone support
-#
-# NOTE:
-# mbusd is not bundled here because it is not available as a stable Alpine
-# package in this build path. For serial bridge support, provide an mbusd
-# binary from the host or build a derived image that adds it to PATH.
-RUN apk --no-cache add ca-certificates tzdata
+ARG TARGETARCH
+ARG TARGETVARIANT
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates tzdata \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /root/
 
 COPY --from=builder /agente-rs .
+COPY third_party/mbusd/armv7/mbusd /tmp/mbusd-armv7
+
+RUN set -eux; \
+    if [ "${TARGETARCH}" = "arm" ] && [ "${TARGETVARIANT}" = "v7" ]; then \
+      install -m 0755 /tmp/mbusd-armv7 /usr/local/bin/mbusd; \
+    fi; \
+    rm -f /tmp/mbusd-armv7
 
 # The agent does not bind any fixed port itself; it connects outbound.
 EXPOSE 0

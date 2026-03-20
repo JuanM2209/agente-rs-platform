@@ -11,7 +11,7 @@ TENANT_ID="${TENANT_ID:-test-org}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
 HEARTBEAT_INTERVAL="${HEARTBEAT_INTERVAL:-30s}"
 INVENTORY_SCAN_INTERVAL="${INVENTORY_SCAN_INTERVAL:-60s}"
-SERIAL_DEVICE="${SERIAL_DEVICE:-}"
+SERIAL_DEVICE="${SERIAL_DEVICE:-/dev/ttymxc5}"
 MBUSD_HOST_PATH="${MBUSD_HOST_PATH:-}"
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -61,7 +61,7 @@ args=(
   -e "INVENTORY_SCAN_INTERVAL=${INVENTORY_SCAN_INTERVAL}"
 )
 
-if [[ -n "${SERIAL_DEVICE}" ]]; then
+if [[ -n "${SERIAL_DEVICE}" && -e "${SERIAL_DEVICE}" ]]; then
   args+=(--device "${SERIAL_DEVICE}:${SERIAL_DEVICE}")
 fi
 
@@ -82,3 +82,12 @@ docker "${args[@]}"
 echo "[OK] ${CONTAINER_NAME} started."
 echo "[INFO] Check status with: docker ps"
 echo "[INFO] Check logs with: docker logs -f ${CONTAINER_NAME}"
+if [[ -n "${SERIAL_DEVICE}" && -e "${SERIAL_DEVICE}" ]]; then
+  echo "[INFO] Serial device mapped: ${SERIAL_DEVICE}"
+  echo "[WARN] If MBUSD is activated from the portal on ${SERIAL_DEVICE}, Node-RED Modbus serial communication on the same port will be interrupted until the bridge stops."
+fi
+if [[ -z "${MBUSD_HOST_PATH}" ]]; then
+  echo "[INFO] Using bundled MBUSD when the image is running on an ARMv7 Nucleus device."
+else
+  echo "[INFO] Using host-provided MBUSD from ${MBUSD_HOST_PATH}."
+fi

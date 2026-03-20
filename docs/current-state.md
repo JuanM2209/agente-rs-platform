@@ -91,6 +91,28 @@ This matches the current operational assumption that every Nucleus device has a 
 - The path can be overridden with `NUCLEUS_SERIAL_NUMBER_FILE`
 - The goal is to let the container auto-identify the Nucleus without forcing manual configuration per device
 
+## MBUSD Serial Export Support
+
+This repo now includes a first end-to-end path for Modbus RTU export over the Nucleus serial port.
+
+### Current assumptions
+
+- The default Modbus serial device is `/dev/ttymxc5`
+- The published `agente-rs` image bundles the provided `mbusd` binary for ARMv7 Nucleus devices
+- The agent inventory scanner now looks for `/dev/ttymxc*` in addition to the older serial device families
+
+### Operational impact
+
+- Starting MBUSD on `/dev/ttymxc5` temporarily interrupts Node-RED Modbus serial communication if Node-RED is using the same serial port
+- The portal now warns the operator before activating the serial bridge and requires explicit acknowledgement
+- Stopping the export session also stops the MBUSD bridge and disables the temporary bridge endpoint
+
+### UI behavior
+
+- Device detail pages now expose a `Start MBUSD + Export` action when the device has serial capability
+- The bridge modal lets the operator choose serial parameters and a temporary TCP bridge port
+- After bridge creation, the portal immediately creates the export session so the helper can import the channel on the laptop
+
 ## Export Session Telemetry
 
 This iteration introduces first-pass telemetry for exported TCP sessions.
@@ -158,6 +180,7 @@ These are still open after this iteration:
 - Inventory still needs a more scalable cached/on-demand strategy
 - The helper is still a CLI MVP, not a persistent Windows tray app
 - GHCR publishing depends on the GitHub Actions deploy workflow remaining healthy
+- The bundled `mbusd` binary is currently only provided for ARMv7; non-ARMv7 environments still need an override binary
 
 ## Next Engineer Checklist
 

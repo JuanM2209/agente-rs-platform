@@ -1,8 +1,9 @@
 import { decodeToken, MOCK_DEVICES, MOCK_ENDPOINTS, ok, err } from "@/app/api/v1/_mock/data";
 
 const SERIAL_PORTS: Record<string, string[]> = {
-  "N-1002": ["/dev/ttyUSB0"],
-  "N-1004": ["/dev/ttyS0"],
+  "N-1001": ["/dev/ttymxc5"],
+  "N-1002": ["/dev/ttymxc5"],
+  "N-1004": ["/dev/ttymxc5"],
 };
 
 export async function GET(req: Request, { params }: { params: { deviceId: string } }) {
@@ -22,7 +23,13 @@ export async function GET(req: Request, { params }: { params: { deviceId: string
       program: all.filter((e) => e.type === "PROGRAM"),
       bridge:  all.filter((e) => e.type === "BRIDGE"),
     },
-    capabilities: { has_serial: serialPorts.length > 0, serial_ports: serialPorts },
+    capabilities: {
+      has_serial: serialPorts.length > 0,
+      serial_ports: serialPorts,
+      modbus_serial_port: "/dev/ttymxc5",
+      activation_warning: "Activating MBUSD on /dev/ttymxc5 temporarily interrupts Node-RED Modbus serial communication while the serial bridge is active.",
+      bundled_bridge_binary: "mbusd (bundled for ARMv7 Nucleus devices)",
+    },
     freshness: { last_scan: device.inventory_updated_at ?? new Date().toISOString(), is_stale: false },
   });
 }

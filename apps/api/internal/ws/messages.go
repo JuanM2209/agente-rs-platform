@@ -16,6 +16,15 @@ const (
 	CmdStopMBUSD           CommandType = "stop_mbusd"
 	CmdRefreshCapabilities CommandType = "refresh_capabilities"
 	CmdHealthPing          CommandType = "health_ping"
+
+	EventRegistration    CommandType = "registration"
+	EventAck             CommandType = "ack"
+	EventInventoryUpdate CommandType = "inventory_update"
+	EventHeartbeat       CommandType = "heartbeat"
+	EventSessionStarted  CommandType = "session_started"
+	EventSessionStopped  CommandType = "session_stopped"
+	EventMBUSDStarted    CommandType = "mbusd_started"
+	EventMBUSDStopped    CommandType = "mbusd_stopped"
 )
 
 // AgentMessage is the envelope for commands sent from the API to an agent.
@@ -31,6 +40,13 @@ type AgentAck struct {
 	ID      string `json:"id"`
 	Success bool   `json:"success"`
 	Error   string `json:"error,omitempty"`
+}
+
+type RegistrationMessage struct {
+	DeviceID string `json:"device_id"`
+	TenantID string `json:"tenant_id"`
+	Secret   string `json:"secret"`
+	Version  string `json:"version"`
 }
 
 // EndpointInfo describes a single service endpoint discovered on the device.
@@ -76,6 +92,15 @@ type StartMBUSDPayload struct {
 // StopMBUSDPayload identifies the bridge to stop.
 type StopMBUSDPayload struct {
 	BridgeID string `json:"bridge_id"`
+}
+
+type HeartbeatPayload struct {
+	DeviceID       string    `json:"device_id"`
+	TenantID       string    `json:"tenant_id"`
+	Uptime         float64   `json:"uptime_seconds"`
+	ActiveSessions int       `json:"active_sessions"`
+	ActiveBridges  int       `json:"active_bridges"`
+	Timestamp      time.Time `json:"timestamp"`
 }
 
 // AgentStatusMessage is a generic status update pushed by the agent.

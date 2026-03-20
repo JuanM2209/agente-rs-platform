@@ -299,6 +299,29 @@ func (h *Handler) StopSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if bridgeID, bridgeDeviceStringID, bridgeErr := h.lookupBridgeForSession(r.Context(), session.EndpointID, tenantID); bridgeErr == nil && bridgeID != "" {
+		if _, dbErr := h.db.Exec(r.Context(), `UPDATE bridge_profiles SET status = 'idle' WHERE id = $1`, bridgeID); dbErr != nil {
+			log.Warn().Err(dbErr).Str("bridge_id", bridgeID).Msg("StopSession: failed to update bridge status")
+		}
+		if _, dbErr := h.db.Exec(r.Context(), `UPDATE endpoints SET enabled = false WHERE id = $1`, session.EndpointID); dbErr != nil {
+			log.Warn().Err(dbErr).Str("endpoint_id", session.EndpointID).Msg("StopSession: failed to disable bridge endpoint")
+		}
+		if bridgeDeviceStringID != "" && h.hub.IsConnected(bridgeDeviceStringID) {
+			payloadData, _ := json.Marshal(ws.StopMBUSDPayload{BridgeID: bridgeID})
+			cmd := ws.AgentMessage{
+				ID:        uuid.New().String(),
+				Type:      ws.CmdStopMBUSD,
+				Payload:   payloadData,
+				Timestamp: now,
+			}
+			if err := h.hub.SendCommand(bridgeDeviceStringID, cmd); err != nil {
+				log.Warn().Err(err).Str("bridge_id", bridgeID).Msg("StopSession: bridge stop notify failed")
+			}
+		}
+	} else if bridgeErr != nil && bridgeErr != pgx.ErrNoRows {
+		log.Warn().Err(bridgeErr).Str("session_id", sessionID).Msg("StopSession: bridge lookup failed")
+	}
+
 	writeJSON(w, http.StatusOK, models.APIResponse{
 		Success: true,
 		Data:    map[string]string{"message": "session stopped", "session_id": sessionID},
@@ -637,6 +660,24 @@ func (h *Handler) recordHistory(
 		session.AuditData,
 	)
 	return err
+}
+
+func (h *Handler) lookupBridgeForSession(ctx context.Context, endpointID, tenantID string) (string, string, error) {
+	const q = `
+		SELECT bp.id, d.device_id
+		FROM endpoints e
+		JOIN devices d ON d.id = e.device_id
+		JOIN bridge_profiles bp ON bp.device_id = e.device_id AND bp.tcp_port = e.port
+		WHERE e.id = $1
+		  AND e.type = 'BRIDGE'
+		  AND bp.status = 'active'
+		  AND d.tenant_id = $2
+		LIMIT 1`
+
+	var bridgeID string
+	var deviceStringID string
+	err := h.db.QueryRow(ctx, q, endpointID, tenantID).Scan(&bridgeID, &deviceStringID)
+	return bridgeID, deviceStringID, err
 }
 
 func buildWebAccessURL(protocol, remoteHost string, port int) string {

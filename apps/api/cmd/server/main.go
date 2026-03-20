@@ -63,7 +63,7 @@ func main() {
 	defer database.CloseRedis()
 
 	// ── WebSocket hub ─────────────────────────────────────────────────────────
-	hub := ws.NewAgentHub(cfg.AgentWSSecret)
+	hub := ws.NewAgentHub(cfg.AgentWSSecret, database.GetPool())
 
 	// ── Router ────────────────────────────────────────────────────────────────
 	router := buildRouter(cfg, hub)

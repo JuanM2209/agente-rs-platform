@@ -54,6 +54,7 @@ type Site struct {
 	TenantID  string    `json:"tenant_id"  db:"tenant_id"`
 	Name      string    `json:"name"       db:"name"`
 	Location  string    `json:"location"   db:"location"`
+	Timezone  string    `json:"timezone"   db:"timezone"`
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 }
 
@@ -79,18 +80,23 @@ type Device struct {
 	LastSeen        *time.Time   `json:"last_seen"        db:"last_seen"`
 	FirmwareVersion string       `json:"firmware_version" db:"firmware_version"`
 	IPAddress       string       `json:"ip_address"       db:"ip_address"`
+	HardwareModel   string       `json:"hardware_model,omitempty" db:"hardware_model"`
+	InventoryUpdatedAt *time.Time `json:"inventory_updated_at,omitempty" db:"inventory_updated_at"`
+	Site            *Site        `json:"site,omitempty"`
 	CreatedAt       time.Time    `json:"created_at"       db:"created_at"`
 }
 
 // Endpoint is a service port exposed by a device.
 type Endpoint struct {
-	ID       string       `json:"id"        db:"id"`
-	DeviceID string       `json:"device_id" db:"device_id"`
-	Type     EndpointType `json:"type"      db:"type"`
-	Port     int          `json:"port"      db:"port"`
-	Label    string       `json:"label"     db:"label"`
-	Protocol string       `json:"protocol"  db:"protocol"`
-	Enabled  bool         `json:"enabled"   db:"enabled"`
+	ID           string       `json:"id"                   db:"id"`
+	DeviceID     string       `json:"device_id"            db:"device_id"`
+	Type         EndpointType `json:"type"                 db:"type"`
+	Port         int          `json:"port"                 db:"port"`
+	Label        string       `json:"label"                db:"label"`
+	Protocol     string       `json:"protocol"             db:"protocol"`
+	Description  string       `json:"description,omitempty" db:"description"`
+	Enabled      bool         `json:"enabled"              db:"enabled"`
+	DiscoveredAt *time.Time   `json:"discovered_at,omitempty" db:"discovered_at"`
 }
 
 // SessionTelemetry captures the health of an exported or web session from the
@@ -157,6 +163,7 @@ type ExportHistory struct {
 type BridgeProfile struct {
 	ID         string    `json:"id"          db:"id"`
 	DeviceID   string    `json:"device_id"   db:"device_id"`
+	EndpointID string    `json:"endpoint_id,omitempty" db:"-"`
 	SerialPort string    `json:"serial_port" db:"serial_port"`
 	BaudRate   int       `json:"baud_rate"   db:"baud_rate"`
 	Parity     string    `json:"parity"      db:"parity"`

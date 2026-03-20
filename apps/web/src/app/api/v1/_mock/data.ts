@@ -7,6 +7,7 @@ import type {
   Endpoint,
   Session,
   ExportHistory,
+  BridgeProfile,
   SessionTelemetry,
 } from "@/types";
 
@@ -112,7 +113,7 @@ export const MOCK_ENDPOINTS: Record<string, Endpoint[]> = {
     { id: "e-1002-443",  device_id: "d-1002", type: "WEB",     port: 443,  label: "HTTPS Web UI", protocol: "https",  description: "Secure device web interface", enabled: true },
     { id: "e-1002-9090", device_id: "d-1002", type: "WEB",     port: 9090, label: "Device UI",    protocol: "http",   description: "Manufacturer device UI",     enabled: true },
     { id: "e-1002-502",  device_id: "d-1002", type: "PROGRAM", port: 502,  label: "Modbus TCP",   protocol: "modbus", description: "Modbus TCP register access", enabled: true },
-    { id: "e-1002-br",   device_id: "d-1002", type: "BRIDGE",  port: 0,    label: "Serial Bridge", protocol: "mbusd", description: "/dev/ttyUSB0 serial bridge", enabled: true },
+    { id: "e-1002-br",   device_id: "d-1002", type: "BRIDGE",  port: 0,    label: "Serial Bridge", protocol: "mbusd", description: "/dev/ttymxc5 serial bridge", enabled: true },
   ],
   "N-1003": [
     { id: "e-1003-80",   device_id: "d-1003", type: "WEB",     port: 80,   label: "HTTP Web UI",  protocol: "http",   enabled: true },
@@ -123,7 +124,7 @@ export const MOCK_ENDPOINTS: Record<string, Endpoint[]> = {
     { id: "e-1004-1880",  device_id: "d-1004", type: "WEB",     port: 1880,  label: "Node-RED",      protocol: "http",       description: "Node-RED flow editor",     enabled: true },
     { id: "e-1004-9090",  device_id: "d-1004", type: "WEB",     port: 9090,  label: "Device UI",     protocol: "http",       description: "Manufacturer device UI",   enabled: true },
     { id: "e-1004-44818", device_id: "d-1004", type: "PROGRAM", port: 44818, label: "EtherNet/IP",   protocol: "ethernet-ip", description: "EtherNet/IP CIP adapter", enabled: true },
-    { id: "e-1004-br",    device_id: "d-1004", type: "BRIDGE",  port: 0,     label: "Serial Bridge",  protocol: "mbusd",      description: "/dev/ttyS0 serial bridge", enabled: true },
+    { id: "e-1004-br",    device_id: "d-1004", type: "BRIDGE",  port: 0,     label: "Serial Bridge",  protocol: "mbusd",      description: "/dev/ttymxc5 serial bridge", enabled: true },
   ],
 };
 
@@ -244,6 +245,8 @@ export const MOCK_HISTORY: ExportHistory[] = [
     device: MOCK_DEVICES[3], endpoint: MOCK_ENDPOINTS["N-1004"][0],
   },
 ];
+
+export const MOCK_BRIDGES: BridgeProfile[] = [];
 
 // Decode a mock token back to a user
 export function decodeToken(token: string): (User & { password: string }) | null {

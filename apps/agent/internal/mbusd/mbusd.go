@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 )
 
 const (
-	mbusdBinary     = "mbusd"
+	defaultMBUSDBinary = "mbusd"
 	startupWait     = 500 * time.Millisecond
 	defaultBaudRate = 9600
 	defaultParity   = "none"
@@ -69,7 +70,7 @@ func New(cfg Config, log zerolog.Logger) *MBUSDProcess {
 //   - serial port device exists
 //   - TCP port is not already in use
 func (m *MBUSDProcess) Validate() error {
-	if _, err := exec.LookPath(mbusdBinary); err != nil {
+	if _, err := exec.LookPath(m.binaryName()); err != nil {
 		return fmt.Errorf("mbusd binary not found on PATH: %w", err)
 	}
 
@@ -108,7 +109,7 @@ func (m *MBUSDProcess) Start() error {
 		Strs("args", args).
 		Msg("starting mbusd process")
 
-	cmd := exec.Command(mbusdBinary, args...)
+	cmd := exec.Command(m.binaryName(), args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := cmd.Start(); err != nil {
@@ -208,10 +209,10 @@ func (m *MBUSDProcess) buildArgs() []string {
 		"-P", strconv.Itoa(m.TCPPort),
 	}
 
-	switch m.Parity {
-	case "even":
+	switch strings.ToLower(strings.TrimSpace(m.Parity)) {
+	case "e", "even":
 		args = append(args, "-p", "even")
-	case "odd":
+	case "o", "odd":
 		args = append(args, "-p", "odd")
 	default:
 		args = append(args, "-p", "none")
@@ -236,4 +237,11 @@ func checkPortFree(port int) error {
 func isExitError(err error) bool {
 	var exitErr *exec.ExitError
 	return errors.As(err, &exitErr)
+}
+
+func (m *MBUSDProcess) binaryName() string {
+	if override := strings.TrimSpace(os.Getenv("MBUSD_BINARY_PATH")); override != "" {
+		return override
+	}
+	return defaultMBUSDBinary
 }

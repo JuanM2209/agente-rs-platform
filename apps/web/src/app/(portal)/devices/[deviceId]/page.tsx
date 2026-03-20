@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { StatusOrb } from "@/components/ui/StatusOrb";
-import { getDeviceInventory, createSession, createModbusBridge, scanDevice } from "@/lib/api";
+import { getDeviceInventory, createSession, createModbusBridge, scanDevice, stopBridge } from "@/lib/api";
 import type { DeviceInventory, Endpoint, CreateSessionRequest } from "@/types";
 import { clsx } from "clsx";
 
@@ -15,6 +15,20 @@ const endpointMeta: Record<number, { icon: string; color: string }> = {
   502: { icon: "electrical_services", color: "text-orange-400" },
   22: { icon: "terminal", color: "text-on-surface-variant" },
   44818: { icon: "settings_ethernet", color: "text-purple-400" },
+};
+
+const defaultBridgeTTLSeconds = 3600;
+const defaultBridgeTCPPort = 5020;
+const fallbackModbusSerialPort = "/dev/ttymxc5";
+
+type BridgeFormState = {
+  serial_port: string;
+  baud_rate: number;
+  parity: "N" | "E" | "O";
+  stop_bits: 1 | 2;
+  data_bits: 7 | 8;
+  tcp_port: number;
+  acknowledge_warning: boolean;
 };
 
 function EndpointCard({
@@ -87,13 +101,20 @@ export default function DeviceDetailPage() {
     mode: "web" | "export";
   } | null>(null);
   const [bridgeModal, setBridgeModal] = useState(false);
+  const [creatingBridge, setCreatingBridge] = useState(false);
+  const [bridgeError, setBridgeError] = useState("");
+  const [bridgeForm, setBridgeForm] = useState<BridgeFormState>({
+    serial_port: fallbackModbusSerialPort,
+    baud_rate: 9600,
+    parity: "N",
+    stop_bits: 1,
+    data_bits: 8,
+    tcp_port: defaultBridgeTCPPort,
+    acknowledge_warning: false,
+  });
   const [activeTab, setActiveTab] = useState<"endpoints" | "sessions" | "history">("endpoints");
 
-  useEffect(() => {
-    loadInventory();
-  }, [deviceId]);
-
-  const loadInventory = async () => {
+  const loadInventory = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
@@ -105,7 +126,11 @@ export default function DeviceDetailPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [deviceId]);
+
+  useEffect(() => {
+    void loadInventory();
+  }, [loadInventory]);
 
   const handleScan = async () => {
     setScanning(true);
@@ -127,6 +152,79 @@ export default function DeviceDetailPage() {
     setSessionModal({ endpoint: ep, mode: "export" });
   };
 
+  const openBridgeModal = () => {
+    const serialPort =
+      inventory?.capabilities.serial_ports[0]
+      ?? inventory?.capabilities.modbus_serial_port
+      ?? fallbackModbusSerialPort;
+
+    setBridgeForm({
+      serial_port: serialPort,
+      baud_rate: 9600,
+      parity: "N",
+      stop_bits: 1,
+      data_bits: 8,
+      tcp_port: defaultBridgeTCPPort,
+      acknowledge_warning: false,
+    });
+    setBridgeError("");
+    setBridgeModal(true);
+  };
+
+  const handleCreateBridge = async () => {
+    if (!inventory) return;
+    if (!bridgeForm.serial_port) {
+      setBridgeError("Select a serial port before starting the Modbus bridge.");
+      return;
+    }
+    if (!bridgeForm.acknowledge_warning) {
+      setBridgeError("Confirm the Node-RED interruption warning before continuing.");
+      return;
+    }
+
+    setCreatingBridge(true);
+    setBridgeError("");
+
+    let createdBridge: { id: string; endpoint_id?: string } | null = null;
+
+    try {
+      createdBridge = await createModbusBridge(deviceId, {
+        serial_port: bridgeForm.serial_port,
+        baud_rate: bridgeForm.baud_rate,
+        parity: bridgeForm.parity,
+        stop_bits: bridgeForm.stop_bits,
+        data_bits: bridgeForm.data_bits,
+        tcp_port: bridgeForm.tcp_port,
+      });
+
+      if (!createdBridge.endpoint_id) {
+        throw new Error("Bridge endpoint was not created by the control plane.");
+      }
+
+      await createSession(deviceId, {
+        endpoint_id: createdBridge.endpoint_id,
+        delivery_mode: "export",
+        ttl_seconds: defaultBridgeTTLSeconds,
+      });
+
+      await loadInventory();
+      setBridgeModal(false);
+      router.push("/sessions");
+    } catch (err: unknown) {
+      if (createdBridge?.id) {
+        try {
+          await stopBridge(createdBridge.id);
+        } catch {
+          // Best effort cleanup if session creation failed after the bridge started.
+        }
+      }
+
+      setBridgeError(err instanceof Error ? err.message : "Failed to start MBUSD export bridge.");
+    } finally {
+      setCreatingBridge(false);
+    }
+  };
+
   const handleCreateSession = async () => {
     if (!sessionModal) return;
     const req: CreateSessionRequest = {
@@ -137,7 +235,7 @@ export default function DeviceDetailPage() {
     try {
       const session = await createSession(deviceId, req);
       if (sessionModal.mode === "web" && session.tunnel_url) {
-        window.open(session.tunnel_url, "_blank");
+        window.open(session.tunnel_url, "_blank", "noopener,noreferrer");
       }
       setSessionModal(null);
       router.push("/sessions");
@@ -355,11 +453,29 @@ export default function DeviceDetailPage() {
 
               {capabilities.has_serial && (
                 <div className="bg-surface-container-high rounded-xl p-6 border border-outline-variant/10">
+                  {capabilities.activation_warning && (
+                    <div className="mb-5 rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3">
+                      <div className="flex items-start gap-3">
+                        <span className="material-symbols-outlined text-amber-300 text-base mt-0.5">
+                          warning
+                        </span>
+                        <div>
+                          <p className="text-sm font-semibold text-amber-200">
+                            Shared Serial Port Warning
+                          </p>
+                          <p className="text-xs text-amber-100/90 mt-1 leading-relaxed">
+                            {capabilities.activation_warning}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex items-start justify-between">
                     <div>
                       <p className="font-semibold text-on-surface mb-1">Modbus Serial Bridge</p>
                       <p className="text-sm text-on-surface-variant">
-                        Create an ephemeral TCP bridge over a serial port (MBUSD).
+                        Create an ephemeral TCP bridge over a serial port (MBUSD) and export it to the helper.
                       </p>
                       <div className="flex flex-wrap gap-2 mt-3">
                         {capabilities.serial_ports.map((port) => (
@@ -370,14 +486,19 @@ export default function DeviceDetailPage() {
                             {port}
                           </span>
                         ))}
+                        {capabilities.bundled_bridge_binary && (
+                          <span className="font-technical text-xs bg-primary/10 px-2 py-1 rounded text-primary">
+                            {capabilities.bundled_bridge_binary}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <button
-                      onClick={() => setBridgeModal(true)}
+                      onClick={openBridgeModal}
                       className="flex items-center gap-2 gradient-primary text-on-primary font-bold px-5 py-2.5 rounded-xl text-sm hover:shadow-primary transition-all active:scale-95 flex-shrink-0 ml-4"
                     >
                       <span className="material-symbols-outlined text-base">add_link</span>
-                      Create Bridge
+                      Start MBUSD + Export
                     </button>
                   </div>
                 </div>
@@ -479,35 +600,130 @@ export default function DeviceDetailPage() {
               Create Modbus Serial Bridge
             </h3>
             <p className="text-sm text-on-surface-variant mb-6">
-              Start an MBUSD bridge that exposes the serial port as a TCP endpoint.
+              Start an MBUSD bridge on the Nucleus and immediately export that serial Modbus channel to the helper.
             </p>
             <div className="space-y-4 mb-6">
               <div>
                 <label className="text-sm text-on-surface-variant block mb-1">Serial Port</label>
-                <select className="w-full bg-surface-container-high rounded-xl px-4 py-3 text-sm text-on-surface border-b-2 border-transparent focus:border-primary outline-none">
+                <select
+                  value={bridgeForm.serial_port}
+                  onChange={(e) => setBridgeForm((current) => ({ ...current, serial_port: e.target.value }))}
+                  className="w-full bg-surface-container-high rounded-xl px-4 py-3 text-sm text-on-surface border-b-2 border-transparent focus:border-primary outline-none"
+                >
                   {capabilities.serial_ports.map((p) => (
-                    <option key={p}>{p}</option>
+                    <option key={p} value={p}>{p}</option>
                   ))}
                 </select>
               </div>
               <div>
                 <label className="text-sm text-on-surface-variant block mb-1">Baud Rate</label>
-                <select className="w-full bg-surface-container-high rounded-xl px-4 py-3 text-sm text-on-surface border-b-2 border-transparent focus:border-primary outline-none">
+                <select
+                  value={bridgeForm.baud_rate}
+                  onChange={(e) => setBridgeForm((current) => ({ ...current, baud_rate: Number(e.target.value) }))}
+                  className="w-full bg-surface-container-high rounded-xl px-4 py-3 text-sm text-on-surface border-b-2 border-transparent focus:border-primary outline-none"
+                >
                   {[9600, 19200, 38400, 57600, 115200].map((b) => (
-                    <option key={b}>{b}</option>
+                    <option key={b} value={b}>{b}</option>
                   ))}
                 </select>
               </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-sm text-on-surface-variant block mb-1">Parity</label>
+                  <select
+                    value={bridgeForm.parity}
+                    onChange={(e) => setBridgeForm((current) => ({ ...current, parity: e.target.value as "N" | "E" | "O" }))}
+                    className="w-full bg-surface-container-high rounded-xl px-4 py-3 text-sm text-on-surface border-b-2 border-transparent focus:border-primary outline-none"
+                  >
+                    <option value="N">None</option>
+                    <option value="E">Even</option>
+                    <option value="O">Odd</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm text-on-surface-variant block mb-1">Data Bits</label>
+                  <select
+                    value={bridgeForm.data_bits}
+                    onChange={(e) => setBridgeForm((current) => ({ ...current, data_bits: Number(e.target.value) as 7 | 8 }))}
+                    className="w-full bg-surface-container-high rounded-xl px-4 py-3 text-sm text-on-surface border-b-2 border-transparent focus:border-primary outline-none"
+                  >
+                    <option value={7}>7</option>
+                    <option value={8}>8</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm text-on-surface-variant block mb-1">Stop Bits</label>
+                  <select
+                    value={bridgeForm.stop_bits}
+                    onChange={(e) => setBridgeForm((current) => ({ ...current, stop_bits: Number(e.target.value) as 1 | 2 }))}
+                    className="w-full bg-surface-container-high rounded-xl px-4 py-3 text-sm text-on-surface border-b-2 border-transparent focus:border-primary outline-none"
+                  >
+                    <option value={1}>1</option>
+                    <option value={2}>2</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-sm text-on-surface-variant block mb-1">Bridge TCP Port</label>
+                <input
+                  type="number"
+                  min={1024}
+                  max={65535}
+                  value={bridgeForm.tcp_port}
+                  onChange={(e) => setBridgeForm((current) => ({ ...current, tcp_port: Number(e.target.value) }))}
+                  className="w-full bg-surface-container-high rounded-xl px-4 py-3 text-sm text-on-surface border-b-2 border-transparent focus:border-primary outline-none"
+                />
+                <p className="text-xs text-on-surface-variant mt-2">
+                  This temporary TCP port is created on the Nucleus before being exported to the laptop helper.
+                </p>
+              </div>
+              <div className="rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3">
+                <div className="flex items-start gap-3">
+                  <span className="material-symbols-outlined text-amber-300 text-base mt-0.5">
+                    warning
+                  </span>
+                  <div>
+                    <p className="text-sm font-semibold text-amber-200">
+                      Node-RED serial communication will be interrupted
+                    </p>
+                    <p className="text-xs text-amber-100/90 mt-1 leading-relaxed">
+                      MBUSD uses <span className="font-technical">{bridgeForm.serial_port || fallbackModbusSerialPort}</span>.
+                      While this serial bridge is active, Node-RED Modbus communication that shares the same serial port will be temporarily unavailable.
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <label className="flex items-start gap-3 rounded-xl bg-surface-container-high px-4 py-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={bridgeForm.acknowledge_warning}
+                  onChange={(e) => setBridgeForm((current) => ({ ...current, acknowledge_warning: e.target.checked }))}
+                  className="mt-1"
+                />
+                <span className="text-sm text-on-surface-variant">
+                  I understand that enabling MBUSD on <span className="font-technical">{bridgeForm.serial_port || fallbackModbusSerialPort}</span> temporarily interrupts Node-RED Modbus serial communication.
+                </span>
+              </label>
+              {bridgeError && (
+                <div className="rounded-xl border border-error/30 bg-error/10 px-4 py-3 text-sm text-error">
+                  {bridgeError}
+                </div>
+              )}
             </div>
             <div className="flex gap-3">
               <button
                 onClick={() => setBridgeModal(false)}
+                disabled={creatingBridge}
                 className="flex-1 py-3 rounded-xl text-sm font-medium text-on-surface-variant hover:bg-surface-container-high transition-colors"
               >
                 Cancel
               </button>
-              <button className="flex-1 gradient-primary text-on-primary font-bold py-3 rounded-xl text-sm hover:shadow-primary transition-all">
-                Start Bridge
+              <button
+                onClick={handleCreateBridge}
+                disabled={creatingBridge}
+                className="flex-1 gradient-primary text-on-primary font-bold py-3 rounded-xl text-sm hover:shadow-primary transition-all disabled:opacity-60"
+              >
+                {creatingBridge ? "Starting..." : "Start Bridge + Export"}
               </button>
             </div>
           </div>

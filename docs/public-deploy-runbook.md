@@ -40,6 +40,8 @@ This runbook documents the current public deployment plan for the project on:
 
 - Each Linux device runs the `agente-rs` container
 - The container reads `Device ID` from `/data/nucleus/factory/nucleus_serial_number`
+- The current Modbus serial device is `/dev/ttymxc5`
+- The published ARMv7 image includes the provided `mbusd` binary at `/usr/local/bin/mbusd`
 - The container connects outbound to:
   - `wss://api.datadesng.com/ws/agent`
 
@@ -130,6 +132,8 @@ TENANT_ID='test-org' \
 ./install-agente-rs.sh
 ```
 
+The installer defaults `SERIAL_DEVICE` to `/dev/ttymxc5`.
+
 ### Run the agent
 
 ```bash
@@ -152,7 +156,25 @@ docker run -d \
   --name agente-rs \
   --restart unless-stopped \
   --network host \
-  --device /dev/ttyUSB0:/dev/ttyUSB0 \
+  --device /dev/ttymxc5:/dev/ttymxc5 \
+  -v /data/nucleus/factory:/data/nucleus/factory:ro \
+  -e CONTROL_PLANE_URL='wss://api.datadesng.com/ws/agent' \
+  -e AGENT_SECRET='replace-with-real-agent-secret' \
+  -e TENANT_ID='test-org' \
+  -e LOG_LEVEL='info' \
+  ghcr.io/juanm2209/agente-rs:latest
+```
+
+### If the external device is not ARMv7
+
+Mount a compatible binary explicitly:
+
+```bash
+docker run -d \
+  --name agente-rs \
+  --restart unless-stopped \
+  --network host \
+  --device /dev/ttymxc5:/dev/ttymxc5 \
   -v /data/nucleus/factory:/data/nucleus/factory:ro \
   -v /usr/local/bin/mbusd:/usr/local/bin/mbusd:ro \
   -e CONTROL_PLANE_URL='wss://api.datadesng.com/ws/agent' \
@@ -168,3 +190,5 @@ docker run -d \
 - Cloudflare quick tunnels are only for visual preview, not the permanent deployment path
 - The dedicated tunnel `agente-rs-public` exists specifically to avoid interfering with unrelated routes on the older `api-dbv` tunnel
 - The external install flow should standardize on `agente-rs`
+- Activating MBUSD on `/dev/ttymxc5` temporarily interrupts Node-RED Modbus serial communication on that same port
+- The portal now shows that warning before allowing the serial export flow

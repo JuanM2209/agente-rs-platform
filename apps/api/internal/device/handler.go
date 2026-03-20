@@ -22,6 +22,37 @@ type Handler struct {
 	hub *ws.AgentHub
 }
 
+const (
+	defaultModbusSerialPort = "/dev/ttymxc5"
+	inventoryStaleAfter     = 10 * time.Minute
+)
+
+type inventoryEndpointGroups struct {
+	Web     []models.Endpoint `json:"web"`
+	Program []models.Endpoint `json:"program"`
+	Bridge  []models.Endpoint `json:"bridge"`
+}
+
+type inventoryCapabilities struct {
+	HasSerial          bool     `json:"has_serial"`
+	SerialPorts        []string `json:"serial_ports"`
+	ModbusSerialPort   string   `json:"modbus_serial_port,omitempty"`
+	ActivationWarning  string   `json:"activation_warning,omitempty"`
+	BundledBridgeBinary string  `json:"bundled_bridge_binary,omitempty"`
+}
+
+type inventoryFreshness struct {
+	LastScan time.Time `json:"last_scan"`
+	IsStale  bool      `json:"is_stale"`
+}
+
+type inventoryResponse struct {
+	Device       *models.Device        `json:"device"`
+	Endpoints    inventoryEndpointGroups `json:"endpoints"`
+	Capabilities inventoryCapabilities `json:"capabilities"`
+	Freshness    inventoryFreshness    `json:"freshness"`
+}
+
 // NewHandler constructs a device Handler.
 func NewHandler(db *pgxpool.Pool, hub *ws.AgentHub) *Handler {
 	return &Handler{db: db, hub: hub}
@@ -35,7 +66,8 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 
 	const q = `
 		SELECT id, tenant_id, site_id, device_id, display_name, status,
-		       last_seen, firmware_version, ip_address, created_at
+		       last_seen, firmware_version, ip_address, hardware_model,
+		       inventory_updated_at, created_at
 		FROM devices
 		WHERE device_id = $1 AND tenant_id = $2
 		LIMIT 1`
@@ -51,6 +83,8 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 		&device.LastSeen,
 		&device.FirmwareVersion,
 		&device.IPAddress,
+		&device.HardwareModel,
+		&device.InventoryUpdatedAt,
 		&device.CreatedAt,
 	)
 	if err != nil {
@@ -85,7 +119,7 @@ func (h *Handler) GetInventory(w http.ResponseWriter, r *http.Request) {
 	deviceID := chi.URLParam(r, "deviceId")
 	tenantID := middleware.GetTenantID(r.Context())
 
-	internalID, err := h.resolveInternalID(r.Context(), deviceID, tenantID)
+	device, err := h.fetchDevice(r.Context(), deviceID, tenantID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			writeJSON(w, http.StatusNotFound, models.APIResponse{
@@ -102,11 +136,13 @@ func (h *Handler) GetInventory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	internalID := device.ID
+
 	const q = `
-		SELECT id, device_id, type, port, label, protocol, enabled
+		SELECT id, device_id, type, port, label, protocol, COALESCE(description, ''), enabled, discovered_at
 		FROM endpoints
-		WHERE device_id = $1
-		ORDER BY port ASC`
+		WHERE device_id = $1 AND enabled = true
+		ORDER BY type ASC, port ASC`
 
 	rows, err := h.db.Query(r.Context(), q, internalID)
 	if err != nil {
@@ -119,7 +155,11 @@ func (h *Handler) GetInventory(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	endpoints := make([]models.Endpoint, 0)
+	groups := inventoryEndpointGroups{
+		Web:     make([]models.Endpoint, 0),
+		Program: make([]models.Endpoint, 0),
+		Bridge:  make([]models.Endpoint, 0),
+	}
 	for rows.Next() {
 		var ep models.Endpoint
 		if scanErr := rows.Scan(
@@ -129,12 +169,21 @@ func (h *Handler) GetInventory(w http.ResponseWriter, r *http.Request) {
 			&ep.Port,
 			&ep.Label,
 			&ep.Protocol,
+			&ep.Description,
 			&ep.Enabled,
+			&ep.DiscoveredAt,
 		); scanErr != nil {
 			log.Error().Err(scanErr).Msg("GetInventory: row scan error")
 			continue
 		}
-		endpoints = append(endpoints, ep)
+		switch ep.Type {
+		case models.EndpointTypeWeb:
+			groups.Web = append(groups.Web, ep)
+		case models.EndpointTypeBridge:
+			groups.Bridge = append(groups.Bridge, ep)
+		default:
+			groups.Program = append(groups.Program, ep)
+		}
 	}
 
 	if rows.Err() != nil {
@@ -146,13 +195,39 @@ func (h *Handler) GetInventory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	serialPorts, bridgeErr := h.fetchSerialPorts(r.Context(), internalID)
+	if bridgeErr != nil {
+		log.Warn().Err(bridgeErr).Str("device_id", deviceID).Msg("GetInventory: serial port lookup failed")
+	}
+	if len(serialPorts) == 0 {
+		serialPorts = []string{defaultModbusSerialPort}
+	}
+
+	lastScan := time.Now().UTC()
+	if device.InventoryUpdatedAt != nil && !device.InventoryUpdatedAt.IsZero() {
+		lastScan = device.InventoryUpdatedAt.UTC()
+	}
+
+	if !h.hub.IsConnected(deviceID) && device.Status == models.DeviceStatusOnline {
+		device.Status = models.DeviceStatusOffline
+	}
+
 	writeJSON(w, http.StatusOK, models.APIResponse{
 		Success: true,
-		Data:    endpoints,
-		Meta: &models.MetaInfo{
-			Total: len(endpoints),
-			Page:  1,
-			Limit: len(endpoints),
+		Data: inventoryResponse{
+			Device:    device,
+			Endpoints: groups,
+			Capabilities: inventoryCapabilities{
+				HasSerial:           len(serialPorts) > 0,
+				SerialPorts:         serialPorts,
+				ModbusSerialPort:    defaultModbusSerialPort,
+				ActivationWarning:   "Activating MBUSD on /dev/ttymxc5 temporarily interrupts Node-RED Modbus serial communication while the serial bridge is active.",
+				BundledBridgeBinary: "mbusd (bundled for ARMv7 Nucleus devices)",
+			},
+			Freshness: inventoryFreshness{
+				LastScan: lastScan,
+				IsStale:  time.Since(lastScan) > inventoryStaleAfter,
+			},
 		},
 	})
 }
@@ -277,6 +352,97 @@ func (h *Handler) resolveInternalID(ctx context.Context, deviceID, tenantID stri
 	const q = `SELECT id FROM devices WHERE device_id = $1 AND tenant_id = $2 LIMIT 1`
 	err := h.db.QueryRow(ctx, q, deviceID, tenantID).Scan(&id)
 	return id, err
+}
+
+func (h *Handler) fetchDevice(ctx context.Context, deviceID, tenantID string) (*models.Device, error) {
+	const q = `
+		SELECT d.id, d.tenant_id, d.site_id, d.device_id, d.display_name, d.status,
+		       d.last_seen, d.firmware_version, d.ip_address, d.hardware_model,
+		       d.inventory_updated_at, d.created_at,
+		       COALESCE(s.id::text, ''), COALESCE(s.tenant_id::text, ''),
+		       COALESCE(s.name, ''), COALESCE(s.location, ''), COALESCE(s.timezone, '')
+		FROM devices d
+		LEFT JOIN sites s ON s.id = d.site_id
+		WHERE d.device_id = $1 AND d.tenant_id = $2
+		LIMIT 1`
+
+	device := &models.Device{}
+	var siteID string
+	var siteTenantID string
+	var siteName string
+	var siteLocation string
+	var siteTimezone string
+
+	if err := h.db.QueryRow(ctx, q, deviceID, tenantID).Scan(
+		&device.ID,
+		&device.TenantID,
+		&device.SiteID,
+		&device.DeviceID,
+		&device.DisplayName,
+		&device.Status,
+		&device.LastSeen,
+		&device.FirmwareVersion,
+		&device.IPAddress,
+		&device.HardwareModel,
+		&device.InventoryUpdatedAt,
+		&device.CreatedAt,
+		&siteID,
+		&siteTenantID,
+		&siteName,
+		&siteLocation,
+		&siteTimezone,
+	); err != nil {
+		return nil, err
+	}
+
+	if siteID != "" {
+		device.Site = &models.Site{
+			ID:       siteID,
+			TenantID: siteTenantID,
+			Name:     siteName,
+			Location: siteLocation,
+			Timezone: siteTimezone,
+		}
+	}
+
+	return device, nil
+}
+
+func (h *Handler) fetchSerialPorts(ctx context.Context, deviceInternalID string) ([]string, error) {
+	const q = `
+		SELECT serial_port
+		FROM bridge_profiles
+		WHERE device_id = $1
+		ORDER BY created_at DESC`
+
+	rows, err := h.db.Query(ctx, q, deviceInternalID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ports := make([]string, 0)
+	seen := make(map[string]struct{})
+	for rows.Next() {
+		var serialPort string
+		if scanErr := rows.Scan(&serialPort); scanErr != nil {
+			continue
+		}
+		if serialPort == "" {
+			continue
+		}
+		if _, ok := seen[serialPort]; ok {
+			continue
+		}
+		seen[serialPort] = struct{}{}
+		ports = append(ports, serialPort)
+	}
+
+	if rows.Err() != nil {
+		return nil, rows.Err()
+	}
+
+	return ports, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

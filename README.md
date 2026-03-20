@@ -20,9 +20,15 @@ The Nucleus Remote Access Portal gives field engineers and support teams a **sea
 Each Nucleus device may expose:
 - **Web UIs** (Node-RED on 1880, device UI on 9090, HTTP/HTTPS on 80/443)
 - **Industrial program ports** (Modbus TCP on 502, EtherNet/IP on 44818, SSH on 22)
-- **Serial bridge capability** (MBUSD Modbus serial-to-TCP bridges)
+- **Serial bridge capability** (MBUSD Modbus serial-to-TCP bridges over `/dev/ttymxc5`)
 
 All access is **on-demand**, **audited**, and **tenant-scoped**.
+
+Current serial bridge behavior:
+
+- `agente-rs` bundles the provided `mbusd` binary for ARMv7 Nucleus devices
+- The portal now exposes `Start MBUSD + Export` from the device detail page when serial capability is present
+- Activating MBUSD on `/dev/ttymxc5` temporarily interrupts Node-RED Modbus serial communication on that same port
 
 Current public test deployment is running on:
 
@@ -229,9 +235,9 @@ DELETE /api/v1/bridges/:bridgeId
 | Device ID | Endpoints | Serial Port |
 |-----------|-----------|-------------|
 | N-1001 | :80 (WEB), :1880 (Node-RED), :502 (Modbus) | No |
-| N-1002 | :443 (HTTPS), :9090 (DevUI), :502 (Modbus) | /dev/ttyUSB0 |
+| N-1002 | :443 (HTTPS), :9090 (DevUI), :502 (Modbus) | /dev/ttymxc5 |
 | N-1003 | :80 (HTTP), :22 (SSH), :502 (Modbus) | No (offline) |
-| N-1004 | :1880 (Node-RED), :9090 (DevUI), :44818 (EIP) | /dev/ttyS0 |
+| N-1004 | :1880 (Node-RED), :9090 (DevUI), :44818 (EIP) | /dev/ttymxc5 |
 
 ---
 

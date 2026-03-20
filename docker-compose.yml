@@ -142,7 +142,7 @@ services:
       TENANT_ID: "tenant-alpha"
       LOG_LEVEL: ${LOG_LEVEL:-debug}
       SIMULATED_PORTS: "443,9090,502"
-      SIMULATED_SERIAL_PORTS: "/dev/ttyUSB0"
+      SIMULATED_SERIAL_PORTS: "/dev/ttymxc5"
     depends_on:
       api:
         condition: service_healthy
@@ -183,7 +183,7 @@ services:
       TENANT_ID: "tenant-alpha"
       LOG_LEVEL: ${LOG_LEVEL:-debug}
       SIMULATED_PORTS: "1880,9090,44818"
-      SIMULATED_SERIAL_PORTS: "/dev/ttyS0"
+      SIMULATED_SERIAL_PORTS: "/dev/ttymxc5"
     depends_on:
       api:
         condition: service_healthy
