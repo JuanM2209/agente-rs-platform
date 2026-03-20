@@ -144,6 +144,8 @@ chmod +x install-remote-s-nucleus.sh
 sudo env CONTROL_PLANE_URL='wss://api.datadesng.com/ws/agent' AGENT_SECRET='replace-with-real-agent-secret' TENANT_ID='test-org' CONTAINER_NAME='Remote-S' SERIAL_DEVICE='/dev/ttymxc5' ./install-remote-s-nucleus.sh
 ```
 
+That legacy installer disables Docker Content Trust during the local build so older Nucleus Docker clients do not fail with `missing signature key`.
+
 ### Run the agent
 
 ```bash

@@ -19,6 +19,7 @@ INVENTORY_SCAN_INTERVAL="${INVENTORY_SCAN_INTERVAL:-60s}"
 SERIAL_DEVICE="${SERIAL_DEVICE:-/dev/ttymxc5}"
 MBUSD_HOST_PATH="${MBUSD_HOST_PATH:-}"
 KEEP_SOURCE="${KEEP_SOURCE:-false}"
+DISABLE_CONTENT_TRUST="${DISABLE_CONTENT_TRUST:-true}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "[ERROR] docker is not installed or not in PATH." >&2
@@ -68,7 +69,12 @@ download_source() {
 download_source
 
 echo "[INFO] Building ${IMAGE_NAME} locally with classic Docker compatibility"
-DOCKER_BUILDKIT=0 docker build -t "${IMAGE_NAME}" "${WORKDIR}/apps/agent"
+if [[ "${DISABLE_CONTENT_TRUST}" = "true" ]]; then
+  echo "[INFO] Disabling Docker Content Trust for this legacy build path"
+  DOCKER_CONTENT_TRUST=0 DOCKER_BUILDKIT=0 docker build --disable-content-trust=true -t "${IMAGE_NAME}" "${WORKDIR}/apps/agent"
+else
+  DOCKER_BUILDKIT=0 docker build -t "${IMAGE_NAME}" "${WORKDIR}/apps/agent"
+fi
 
 if docker ps -a --format '{{.Names}}' | grep -Fxq "${CONTAINER_NAME}"; then
   echo "[INFO] Replacing existing container ${CONTAINER_NAME}"
@@ -122,4 +128,7 @@ if [[ -z "${MBUSD_HOST_PATH}" ]]; then
   echo "[INFO] Using bundled MBUSD when the image is running on an ARMv7 Nucleus device."
 else
   echo "[INFO] Using host-provided MBUSD from ${MBUSD_HOST_PATH}."
+fi
+if [[ "${DISABLE_CONTENT_TRUST}" = "true" ]]; then
+  echo "[INFO] Docker Content Trust was disabled for the local build to avoid old-engine signature issues."
 fi

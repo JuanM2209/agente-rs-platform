@@ -187,6 +187,8 @@ Some real Nucleus devices run an older Docker engine similar to the environment 
 
 For those devices, use the dedicated local-build installer for `Remote-S`. It clones the repo, builds the agent image locally with classic Docker compatibility, then starts the container.
 
+That installer also disables Docker Content Trust during the local build path, because some older Nucleus Docker engines fail with `missing signature key` while resolving modern base images from Docker Hub.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JuanM2209/agente-rs-platform/main/scripts/install-remote-s-nucleus.sh -o install-remote-s-nucleus.sh
 chmod +x install-remote-s-nucleus.sh
