@@ -292,7 +292,7 @@ Published container images:
 - `ghcr.io/juanm2209/nucleus-api:latest`
 - `ghcr.io/juanm2209/agente-rs:latest`
 
-For older Nucleus devices that cannot reliably pull the multi-arch GHCR image, use the local-build installer:
+For older Nucleus devices that cannot reliably pull the multi-arch GHCR image, use the legacy installer. It first tries a local classic-Docker build and then falls back to a prebuilt ARMv7 image from GitHub Releases if needed:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JuanM2209/agente-rs-platform/main/scripts/install-remote-s-nucleus.sh -o install-remote-s-nucleus.sh

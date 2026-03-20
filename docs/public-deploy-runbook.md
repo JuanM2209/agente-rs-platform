@@ -136,7 +136,7 @@ The installer defaults `SERIAL_DEVICE` to `/dev/ttymxc5`.
 
 ### Legacy ARMv7 Nucleus install
 
-If the target device looks like the existing Node-RED appliance environment (`armv7l`, Docker 19.x), use the local-build installer instead of pulling GHCR directly:
+If the target device looks like the existing Node-RED appliance environment (`armv7l`, Docker 19.x), use the legacy installer instead of pulling GHCR directly:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JuanM2209/agente-rs-platform/main/scripts/install-remote-s-nucleus.sh -o install-remote-s-nucleus.sh
@@ -144,7 +144,7 @@ chmod +x install-remote-s-nucleus.sh
 sudo env CONTROL_PLANE_URL='wss://api.datadesng.com/ws/agent' AGENT_SECRET='replace-with-real-agent-secret' TENANT_ID='test-org' CONTAINER_NAME='Remote-S' SERIAL_DEVICE='/dev/ttymxc5' ./install-remote-s-nucleus.sh
 ```
 
-That legacy installer disables Docker Content Trust during the local build so older Nucleus Docker clients do not fail with `missing signature key`.
+That legacy installer disables Docker Content Trust during the local build so older Nucleus Docker clients do not fail with `missing signature key`. If the build still fails on the target Nucleus, the installer automatically downloads and loads a prebuilt ARMv7 `Remote-S` image from GitHub Releases.
 
 ### Run the agent
 

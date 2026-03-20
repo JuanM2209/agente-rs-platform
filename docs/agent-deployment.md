@@ -185,7 +185,7 @@ Some real Nucleus devices run an older Docker engine similar to the environment 
 - `DockerVersion: 19.03.2`
 - Debian-based runtime
 
-For those devices, use the dedicated local-build installer for `Remote-S`. It clones the repo, builds the agent image locally with classic Docker compatibility, then starts the container.
+For those devices, use the dedicated legacy installer for `Remote-S`. It first tries a local classic-Docker build. If that still fails on the target Nucleus, it automatically falls back to a prebuilt ARMv7 image hosted in GitHub Releases.
 
 That installer also disables Docker Content Trust during the local build path, because some older Nucleus Docker engines fail with `missing signature key` while resolving modern base images from Docker Hub.
 

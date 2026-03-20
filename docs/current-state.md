@@ -126,7 +126,8 @@ Because some real Nucleus devices use older Docker engines that do not handle th
 That installer:
 
 - clones or downloads the repo source on the Nucleus
-- builds the agent image locally without requiring `FROM --platform=...`
+- tries to build the agent image locally without requiring `FROM --platform=...`
+- falls back to a prebuilt ARMv7 image from GitHub Releases if the local build fails on the target Docker engine
 - starts the container as `Remote-S` by default
 
 ## Export Session Telemetry

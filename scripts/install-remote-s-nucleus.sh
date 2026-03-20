@@ -8,6 +8,10 @@ WORKDIR="${WORKDIR:-/tmp/agente-rs-platform}"
 ARCHIVE_PATH="${ARCHIVE_PATH:-/tmp/agente-rs-platform-main.tar.gz}"
 ARCHIVE_URL="${ARCHIVE_URL:-https://github.com/JuanM2209/agente-rs-platform/archive/refs/heads/${GIT_REF}.tar.gz}"
 IMAGE_NAME="${IMAGE_NAME:-remote-s-local}"
+PREBUILT_IMAGE_NAME="${PREBUILT_IMAGE_NAME:-remote-s-prebuilt:armv7}"
+PREBUILT_TAG="${PREBUILT_TAG:-legacy-armv7-20260320}"
+PREBUILT_ASSET="${PREBUILT_ASSET:-remote-s-armv7-image.tar.gz}"
+PREBUILT_TAR_URL="${PREBUILT_TAR_URL:-https://github.com/JuanM2209/agente-rs-platform/releases/download/${PREBUILT_TAG}/${PREBUILT_ASSET}}"
 CONTAINER_NAME="${CONTAINER_NAME:-Remote-S}"
 FACTORY_PATH="${FACTORY_PATH:-/data/nucleus/factory}"
 CONTROL_PLANE_URL="${CONTROL_PLANE_URL:-}"
@@ -20,6 +24,7 @@ SERIAL_DEVICE="${SERIAL_DEVICE:-/dev/ttymxc5}"
 MBUSD_HOST_PATH="${MBUSD_HOST_PATH:-}"
 KEEP_SOURCE="${KEEP_SOURCE:-false}"
 DISABLE_CONTENT_TRUST="${DISABLE_CONTENT_TRUST:-true}"
+FORCE_PREBUILT_IMAGE="${FORCE_PREBUILT_IMAGE:-false}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "[ERROR] docker is not installed or not in PATH." >&2
@@ -66,14 +71,41 @@ download_source() {
   mv "${WORKDIR}-main" "${WORKDIR}"
 }
 
-download_source
+load_prebuilt_image() {
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "[ERROR] curl is required to download the prebuilt Remote-S image." >&2
+    exit 1
+  fi
 
-echo "[INFO] Building ${IMAGE_NAME} locally with classic Docker compatibility"
-if [[ "${DISABLE_CONTENT_TRUST}" = "true" ]]; then
-  echo "[INFO] Disabling Docker Content Trust for this legacy build path"
-  DOCKER_CONTENT_TRUST=0 DOCKER_BUILDKIT=0 docker build --disable-content-trust=true -t "${IMAGE_NAME}" "${WORKDIR}/apps/agent"
+  if ! command -v gzip >/dev/null 2>&1; then
+    echo "[ERROR] gzip is required to unpack the prebuilt Remote-S image." >&2
+    exit 1
+  fi
+
+  echo "[INFO] Loading prebuilt image ${PREBUILT_IMAGE_NAME} from ${PREBUILT_TAR_URL}"
+  curl -fsSL "${PREBUILT_TAR_URL}" | gzip -dc | docker load
+  IMAGE_NAME="${PREBUILT_IMAGE_NAME}"
+}
+
+build_local_image() {
+  download_source
+
+  echo "[INFO] Building ${IMAGE_NAME} locally with classic Docker compatibility"
+  if [[ "${DISABLE_CONTENT_TRUST}" = "true" ]]; then
+    echo "[INFO] Disabling Docker Content Trust for this legacy build path"
+    DOCKER_CONTENT_TRUST=0 DOCKER_BUILDKIT=0 docker build --disable-content-trust=true -t "${IMAGE_NAME}" "${WORKDIR}/apps/agent"
+  else
+    DOCKER_BUILDKIT=0 docker build -t "${IMAGE_NAME}" "${WORKDIR}/apps/agent"
+  fi
+}
+
+if [[ "${FORCE_PREBUILT_IMAGE}" = "true" ]]; then
+  load_prebuilt_image
 else
-  DOCKER_BUILDKIT=0 docker build -t "${IMAGE_NAME}" "${WORKDIR}/apps/agent"
+  if ! build_local_image; then
+    echo "[WARN] Local build failed on this Nucleus. Falling back to the prebuilt ARMv7 Remote-S image." >&2
+    load_prebuilt_image
+  fi
 fi
 
 if docker ps -a --format '{{.Names}}' | grep -Fxq "${CONTAINER_NAME}"; then
