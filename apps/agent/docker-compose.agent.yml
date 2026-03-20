@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  agent-n1001:
+    build: .
+    environment:
+      DEVICE_ID: "N-1001"
+      CONTROL_PLANE_URL: "ws://api:8080/ws/agent"
+      AGENT_SECRET: "dev-secret"
+      TENANT_ID: "tenant-alpha"
+      LOG_LEVEL: "debug"
+      HEARTBEAT_INTERVAL: "10s"
+      INVENTORY_SCAN_INTERVAL: "30s"
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - nucleus-net
+
+  agent-n1002:
+    build: .
+    environment:
+      DEVICE_ID: "N-1002"
+      CONTROL_PLANE_URL: "ws://api:8080/ws/agent"
+      AGENT_SECRET: "dev-secret"
+      TENANT_ID: "tenant-alpha"
+      LOG_LEVEL: "debug"
+      HEARTBEAT_INTERVAL: "10s"
+      INVENTORY_SCAN_INTERVAL: "30s"
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - nucleus-net
+
+  agent-n1003:
+    build: .
+    environment:
+      DEVICE_ID: "N-1003"
+      CONTROL_PLANE_URL: "ws://api:8080/ws/agent"
+      AGENT_SECRET: "dev-secret"
+      TENANT_ID: "tenant-alpha"
+      LOG_LEVEL: "debug"
+      HEARTBEAT_INTERVAL: "10s"
+      INVENTORY_SCAN_INTERVAL: "30s"
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - nucleus-net
+
+  agent-n1004:
+    build: .
+    environment:
+      DEVICE_ID: "N-1004"
+      CONTROL_PLANE_URL: "ws://api:8080/ws/agent"
+      AGENT_SECRET: "dev-secret"
+      TENANT_ID: "tenant-alpha"
+      LOG_LEVEL: "debug"
+      HEARTBEAT_INTERVAL: "10s"
+      INVENTORY_SCAN_INTERVAL: "30s"
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - nucleus-net
+
+networks:
+  nucleus-net:
+    external: true

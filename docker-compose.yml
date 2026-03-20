@@ -1,0 +1,193 @@
+version: '3.9'
+
+# ============================================================
+# Nucleus Remote Access Portal — Docker Compose
+# Local development environment with all services
+# Usage: docker compose up -d
+# ============================================================
+
+networks:
+  nucleus-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+
+services:
+
+  # ---- PostgreSQL ----------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: nucleus-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nucleus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nucleus_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-nucleus_portal}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/docker/postgres/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./infra/migrations:/migrations:ro
+      - ./infra/seeds:/seeds:ro
+    networks:
+      - nucleus-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nucleus} -d ${POSTGRES_DB:-nucleus_portal}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---- Redis -----------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: nucleus-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - nucleus-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---- Backend API -----------------------------------------
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: nucleus-api
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      SERVER_PORT: 8080
+      DATABASE_URL: postgresql://${POSTGRES_USER:-nucleus}:${POSTGRES_PASSWORD:-nucleus_dev}@postgres:5432/${POSTGRES_DB:-nucleus_portal}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-in-prod}
+      JWT_EXPIRY_HOURS: ${JWT_EXPIRY_HOURS:-24}
+      AGENT_WS_SECRET: ${AGENT_WS_SECRET:-dev-agent-secret}
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://localhost:3000}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - nucleus-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ---- Frontend --------------------------------------------
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+    container_name: nucleus-web
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    networks:
+      - nucleus-net
+
+  # ---- Simulated Nucleus Agents ----------------------------
+  agent-n1001:
+    build:
+      context: ./apps/agent
+      dockerfile: Dockerfile
+    container_name: nucleus-agent-n1001
+    restart: unless-stopped
+    environment:
+      DEVICE_ID: "N-1001"
+      CONTROL_PLANE_URL: "ws://api:8080/ws/agent"
+      AGENT_SECRET: ${AGENT_WS_SECRET:-dev-agent-secret}
+      TENANT_ID: "tenant-alpha"
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      SIMULATED_PORTS: "80,1880,502"
+      SIMULATED_SERIAL_PORTS: ""
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - nucleus-net
+
+  agent-n1002:
+    build:
+      context: ./apps/agent
+      dockerfile: Dockerfile
+    container_name: nucleus-agent-n1002
+    restart: unless-stopped
+    environment:
+      DEVICE_ID: "N-1002"
+      CONTROL_PLANE_URL: "ws://api:8080/ws/agent"
+      AGENT_SECRET: ${AGENT_WS_SECRET:-dev-agent-secret}
+      TENANT_ID: "tenant-alpha"
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      SIMULATED_PORTS: "443,9090,502"
+      SIMULATED_SERIAL_PORTS: "/dev/ttyUSB0"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - nucleus-net
+
+  agent-n1003:
+    build:
+      context: ./apps/agent
+      dockerfile: Dockerfile
+    container_name: nucleus-agent-n1003
+    restart: unless-stopped
+    environment:
+      DEVICE_ID: "N-1003"
+      CONTROL_PLANE_URL: "ws://api:8080/ws/agent"
+      AGENT_SECRET: ${AGENT_WS_SECRET:-dev-agent-secret}
+      TENANT_ID: "tenant-alpha"
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      SIMULATED_PORTS: "80,22,502"
+      SIMULATED_SERIAL_PORTS: ""
+      SIMULATED_OFFLINE: "true"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - nucleus-net
+
+  agent-n1004:
+    build:
+      context: ./apps/agent
+      dockerfile: Dockerfile
+    container_name: nucleus-agent-n1004
+    restart: unless-stopped
+    environment:
+      DEVICE_ID: "N-1004"
+      CONTROL_PLANE_URL: "ws://api:8080/ws/agent"
+      AGENT_SECRET: ${AGENT_WS_SECRET:-dev-agent-secret}
+      TENANT_ID: "tenant-alpha"
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      SIMULATED_PORTS: "1880,9090,44818"
+      SIMULATED_SERIAL_PORTS: "/dev/ttyS0"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - nucleus-net

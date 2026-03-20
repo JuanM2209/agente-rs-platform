@@ -1,0 +1,43 @@
+# ============================================================
+# Cloudflare Tunnel Configuration
+# nucleus-remote-access-portal
+#
+# Setup:
+# 1. Install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+# 2. cloudflared login
+# 3. cloudflared tunnel create nucleus-portal
+# 4. Copy tunnel credentials to ~/.cloudflared/<tunnel-id>.json
+# 5. Update tunnel_id below
+# 6. cloudflared tunnel route dns nucleus-portal portal.yourdomain.com
+# 7. cloudflared tunnel run nucleus-portal
+# ============================================================
+
+tunnel: <TUNNEL_ID>
+credentials-file: /home/nucleus/.cloudflared/<TUNNEL_ID>.json
+
+# Ingress rules — route public domains to local services
+ingress:
+  # Web portal
+  - hostname: portal.yourdomain.com
+    service: http://localhost:3000
+    originRequest:
+      noTLSVerify: false
+      connectTimeout: 30s
+
+  # API (for web app and direct API access)
+  - hostname: api.yourdomain.com
+    service: http://localhost:8080
+    originRequest:
+      noTLSVerify: false
+      connectTimeout: 30s
+      httpHostHeader: api.yourdomain.com
+
+  # WebSocket agent connections (must allow WS upgrade)
+  - hostname: agents.yourdomain.com
+    service: http://localhost:8080
+    originRequest:
+      noTLSVerify: false
+      connectTimeout: 30s
+
+  # Fallback
+  - service: http_status:404
