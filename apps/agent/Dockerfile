@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.22-alpine AS builder
+FROM golang:1.22-bullseye AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -12,16 +12,20 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -ldflags="-s -w" -o /agente-rs ./cmd
+RUN set -eux; \
+    export GOOS="${TARGETOS:-linux}"; \
+    if [ -n "${TARGETARCH:-}" ]; then \
+      export GOARCH="${TARGETARCH}"; \
+    fi; \
+    if [ "${TARGETARCH:-}" = "arm" ] && [ -n "${TARGETVARIANT:-}" ]; then \
+      export GOARM="${TARGETVARIANT#v}"; \
+    fi; \
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o /agente-rs ./cmd
 
 # ---------------------------------------------------------------------------
 # Runtime image
 # ---------------------------------------------------------------------------
-FROM debian:bookworm-slim
-
-ARG TARGETARCH
-ARG TARGETVARIANT
+FROM debian:bullseye-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates tzdata \
@@ -33,7 +37,8 @@ COPY --from=builder /agente-rs .
 COPY third_party/mbusd/armv7/mbusd /tmp/mbusd-armv7
 
 RUN set -eux; \
-    if [ "${TARGETARCH}" = "arm" ] && [ "${TARGETVARIANT}" = "v7" ]; then \
+    arch="$(dpkg --print-architecture)"; \
+    if [ "${arch}" = "armhf" ]; then \
       install -m 0755 /tmp/mbusd-armv7 /usr/local/bin/mbusd; \
     fi; \
     rm -f /tmp/mbusd-armv7

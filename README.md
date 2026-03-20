@@ -29,6 +29,7 @@ Current serial bridge behavior:
 - `agente-rs` bundles the provided `mbusd` binary for ARMv7 Nucleus devices
 - The portal now exposes `Start MBUSD + Export` from the device detail page when serial capability is present
 - Activating MBUSD on `/dev/ttymxc5` temporarily interrupts Node-RED Modbus serial communication on that same port
+- A legacy-safe Nucleus installer now exists for older Docker 19.x ARMv7 devices: `scripts/install-remote-s-nucleus.sh`
 
 Current public test deployment is running on:
 
@@ -290,6 +291,14 @@ Published container images:
 
 - `ghcr.io/juanm2209/nucleus-api:latest`
 - `ghcr.io/juanm2209/agente-rs:latest`
+
+For older Nucleus devices that cannot reliably pull the multi-arch GHCR image, use the local-build installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JuanM2209/agente-rs-platform/main/scripts/install-remote-s-nucleus.sh -o install-remote-s-nucleus.sh
+chmod +x install-remote-s-nucleus.sh
+sudo env CONTROL_PLANE_URL='wss://api.datadesng.com/ws/agent' AGENT_SECRET='YOUR_AGENT_SECRET' TENANT_ID='test-org' CONTAINER_NAME='Remote-S' SERIAL_DEVICE='/dev/ttymxc5' ./install-remote-s-nucleus.sh
+```
 
 ---
 

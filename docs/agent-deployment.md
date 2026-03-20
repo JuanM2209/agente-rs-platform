@@ -177,6 +177,24 @@ docker run -d \
   agente-rs:latest
 ```
 
+### Legacy Nucleus / Docker 19.x compatibility
+
+Some real Nucleus devices run an older Docker engine similar to the environment used by the existing Node-RED image:
+
+- `Architecture: armv7l`
+- `DockerVersion: 19.03.2`
+- Debian-based runtime
+
+For those devices, use the dedicated local-build installer for `Remote-S`. It clones the repo, builds the agent image locally with classic Docker compatibility, then starts the container.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JuanM2209/agente-rs-platform/main/scripts/install-remote-s-nucleus.sh -o install-remote-s-nucleus.sh
+chmod +x install-remote-s-nucleus.sh
+sudo env CONTROL_PLANE_URL='wss://api.datadesng.com/ws/agent' AGENT_SECRET='YOUR_AGENT_SECRET' TENANT_ID='test-org' CONTAINER_NAME='Remote-S' SERIAL_DEVICE='/dev/ttymxc5' ./install-remote-s-nucleus.sh
+```
+
+Default local image name for that path is `remote-s-local`.
+
 ### If the device has the Nucleus Modbus serial adapter
 
 Example with `/dev/ttymxc5`:

@@ -100,6 +100,10 @@ This repo now includes a first end-to-end path for Modbus RTU export over the Nu
 - The default Modbus serial device is `/dev/ttymxc5`
 - The published `agente-rs` image bundles the provided `mbusd` binary for ARMv7 Nucleus devices
 - The agent inventory scanner now looks for `/dev/ttymxc*` in addition to the older serial device families
+- The existing Nucleus Node-RED image was inspected as a compatibility reference and confirmed an older target environment:
+  - `Architecture: armv7l`
+  - `DockerVersion: 19.03.2`
+  - Debian-based runtime
 
 ### Operational impact
 
@@ -112,6 +116,18 @@ This repo now includes a first end-to-end path for Modbus RTU export over the Nu
 - Device detail pages now expose a `Start MBUSD + Export` action when the device has serial capability
 - The bridge modal lets the operator choose serial parameters and a temporary TCP bridge port
 - After bridge creation, the portal immediately creates the export session so the helper can import the channel on the laptop
+
+### Legacy install path
+
+Because some real Nucleus devices use older Docker engines that do not handle the current GHCR multi-arch flow reliably, the repo now includes a legacy-safe installer:
+
+- `scripts/install-remote-s-nucleus.sh`
+
+That installer:
+
+- clones or downloads the repo source on the Nucleus
+- builds the agent image locally without requiring `FROM --platform=...`
+- starts the container as `Remote-S` by default
 
 ## Export Session Telemetry
 

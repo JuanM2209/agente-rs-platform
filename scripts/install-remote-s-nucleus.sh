@@ -2,8 +2,13 @@
 
 set -euo pipefail
 
-IMAGE="${IMAGE:-ghcr.io/juanm2209/agente-rs:latest}"
-CONTAINER_NAME="${CONTAINER_NAME:-agente-rs}"
+REPO_URL="${REPO_URL:-https://github.com/JuanM2209/agente-rs-platform.git}"
+GIT_REF="${GIT_REF:-main}"
+WORKDIR="${WORKDIR:-/tmp/agente-rs-platform}"
+ARCHIVE_PATH="${ARCHIVE_PATH:-/tmp/agente-rs-platform-main.tar.gz}"
+ARCHIVE_URL="${ARCHIVE_URL:-https://github.com/JuanM2209/agente-rs-platform/archive/refs/heads/${GIT_REF}.tar.gz}"
+IMAGE_NAME="${IMAGE_NAME:-remote-s-local}"
+CONTAINER_NAME="${CONTAINER_NAME:-Remote-S}"
 FACTORY_PATH="${FACTORY_PATH:-/data/nucleus/factory}"
 CONTROL_PLANE_URL="${CONTROL_PLANE_URL:-}"
 AGENT_SECRET="${AGENT_SECRET:-}"
@@ -13,6 +18,7 @@ HEARTBEAT_INTERVAL="${HEARTBEAT_INTERVAL:-30s}"
 INVENTORY_SCAN_INTERVAL="${INVENTORY_SCAN_INTERVAL:-60s}"
 SERIAL_DEVICE="${SERIAL_DEVICE:-/dev/ttymxc5}"
 MBUSD_HOST_PATH="${MBUSD_HOST_PATH:-}"
+KEEP_SOURCE="${KEEP_SOURCE:-false}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "[ERROR] docker is not installed or not in PATH." >&2
@@ -39,12 +45,30 @@ if [[ ! -f "${SERIAL_NUMBER_FILE}" ]]; then
   echo "[WARN] ${SERIAL_NUMBER_FILE} was not found. The agent will need DEVICE_ID from another source." >&2
 fi
 
-echo "[INFO] Pulling image ${IMAGE}"
-if ! docker pull "${IMAGE}"; then
-  echo "[ERROR] Failed to pull ${IMAGE}." >&2
-  echo "[HINT] Legacy ARMv7 Nucleus devices running Docker 19.x should use scripts/install-remote-s-nucleus.sh to build Remote-S locally from GitHub." >&2
-  exit 1
-fi
+download_source() {
+  rm -rf "${WORKDIR}" "${ARCHIVE_PATH}" "${WORKDIR}-main"
+
+  if command -v git >/dev/null 2>&1; then
+    echo "[INFO] Cloning ${REPO_URL} (${GIT_REF}) into ${WORKDIR}"
+    git clone --depth 1 --branch "${GIT_REF}" "${REPO_URL}" "${WORKDIR}"
+    return
+  fi
+
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "[ERROR] Neither git nor curl is available to download the source." >&2
+    exit 1
+  fi
+
+  echo "[INFO] Downloading source archive ${ARCHIVE_URL}"
+  curl -fsSL "${ARCHIVE_URL}" -o "${ARCHIVE_PATH}"
+  tar -xzf "${ARCHIVE_PATH}" -C /tmp
+  mv "${WORKDIR}-main" "${WORKDIR}"
+}
+
+download_source
+
+echo "[INFO] Building ${IMAGE_NAME} locally with classic Docker compatibility"
+DOCKER_BUILDKIT=0 docker build -t "${IMAGE_NAME}" "${WORKDIR}/apps/agent"
 
 if docker ps -a --format '{{.Names}}' | grep -Fxq "${CONTAINER_NAME}"; then
   echo "[INFO] Replacing existing container ${CONTAINER_NAME}"
@@ -78,10 +102,14 @@ if [[ -n "${MBUSD_HOST_PATH}" ]]; then
   args+=(-v "${MBUSD_HOST_PATH}:/usr/local/bin/mbusd:ro")
 fi
 
-args+=("${IMAGE}")
+args+=("${IMAGE_NAME}")
 
 echo "[INFO] Starting container ${CONTAINER_NAME}"
 docker "${args[@]}"
+
+if [[ "${KEEP_SOURCE}" != "true" ]]; then
+  rm -rf "${WORKDIR}" "${ARCHIVE_PATH}" "${WORKDIR}-main"
+fi
 
 echo "[OK] ${CONTAINER_NAME} started."
 echo "[INFO] Check status with: docker ps"
