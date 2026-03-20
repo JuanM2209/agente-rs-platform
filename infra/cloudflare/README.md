@@ -37,35 +37,32 @@ sudo dpkg -i cloudflared.deb
 brew install cloudflare/cloudflare/cloudflared
 ```
 
-### Step 2: Authenticate and create tunnel
+### Step 2: Authenticate and select the existing tunnel
 
 ```bash
 cloudflared login
-cloudflared tunnel create nucleus-portal
-
-# Note the tunnel ID and credentials path
+cloudflared tunnel list
 ```
 
 ### Step 3: Configure DNS routes
 
 ```bash
-cloudflared tunnel route dns nucleus-portal portal.yourdomain.com
-cloudflared tunnel route dns nucleus-portal api.yourdomain.com
-cloudflared tunnel route dns nucleus-portal agents.yourdomain.com
+cloudflared tunnel route dns api-dbv portal.datadesng.com
+cloudflared tunnel route dns api-dbv api.datadesng.com
 ```
 
 ### Step 4: Update tunnel config
 
 Edit `infra/cloudflare/tunnel-config.yml`:
-- Replace `<TUNNEL_ID>` with your actual tunnel ID
-- Replace `yourdomain.com` with your actual domain
-- Update credentials-file path
+- Confirm `portal.datadesng.com`
+- Confirm `api.datadesng.com`
+- Confirm the tunnel name `api-dbv`
 
 ### Step 5: Run the tunnel
 
 ```bash
 # Manual run
-cloudflared tunnel --config infra/cloudflare/tunnel-config.yml run
+cloudflared tunnel --config infra/cloudflare/tunnel-config.yml run api-dbv
 
 # Or as a service
 sudo cloudflared service install
@@ -88,15 +85,14 @@ The API has middleware to validate CF_Authorization JWT headers when `CF_ACCESS_
 
 ## Environment Variables (Production)
 
-```bash
-CLOUDFLARE_ACCOUNT_ID=your-account-id
-CLOUDFLARE_API_TOKEN=your-api-token
-CLOUDFLARE_ZONE_ID=your-zone-id
-CLOUDFLARE_TUNNEL_TOKEN=your-tunnel-token
-CLOUDFLARE_TUNNEL_ID=your-tunnel-id
-CF_ACCESS_TEAM_DOMAIN=yourteam.cloudflareaccess.com  # optional
-CF_ACCESS_AUD=your-access-aud                         # optional
-```
+Use local secrets or environment variables for:
+
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ZONE_ID`
+- `CLOUDFLARE_TUNNEL_TOKEN`
+- `CF_ACCESS_TEAM_DOMAIN` optional
+- `CF_ACCESS_AUD` optional
 
 ---
 
@@ -115,7 +111,7 @@ Worker template: `infra/cloudflare/workers/session-url-signer.js` (Phase 2)
 
 Nucleus agents connect outbound via WebSocket to the control plane. Through Cloudflare Tunnel:
 
-- Agents on-premise connect to `wss://agents.yourdomain.com/ws/agent`
+- Agents on-premise connect to `wss://api.datadesng.com/ws/agent`
 - Cloudflare tunnels this to `http://localhost:8080`
 - The tunnel handles TLS termination
 

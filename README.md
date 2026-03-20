@@ -4,6 +4,15 @@
 
 ---
 
+## Engineering Notes
+
+- Living docs for future engineers: `docs/current-state.md`
+- Docs index: `docs/README.md`
+- Public deployment runbook: `docs/public-deploy-runbook.md`
+- External agent install guide: `docs/agent-deployment.md`
+
+---
+
 ## What Is This?
 
 The Nucleus Remote Access Portal gives field engineers and support teams a **search-first, session-based** interface for securely accessing industrial edge devices remotely.
@@ -14,6 +23,8 @@ Each Nucleus device may expose:
 - **Serial bridge capability** (MBUSD Modbus serial-to-TCP bridges)
 
 All access is **on-demand**, **audited**, and **tenant-scoped**.
+
+Current preview deployment is running behind Cloudflare preview infrastructure. Treat preview URLs as temporary.
 
 ---
 
@@ -248,28 +259,25 @@ nucleus-helper.exe unmap --session-id <id>
 See `infra/cloudflare/README.md` for full setup.
 
 **Summary:**
-1. Create tunnel: `cloudflared tunnel create nucleus-portal`
-2. Route DNS: `portal.yourdomain.com -> localhost:3000`, `api.yourdomain.com -> localhost:8080`
-3. Agents connect to: `wss://agents.yourdomain.com/ws/agent`
-4. Optionally add Zero Trust Access policy for SSO gating
+1. Reuse named tunnel `api-dbv`
+2. Route DNS: `portal.datadesng.com -> localhost:3000`, `api.datadesng.com -> localhost:8080`
+3. Agents connect to: `wss://api.datadesng.com/ws/agent`
+4. Optionally add Zero Trust Access policy for the portal
 
 ---
 
-## GitHub Repository Bootstrap
+## Public GitHub And GHCR
 
 ```bash
-git init
-git add .
-git commit -m "feat: initial scaffold for Nucleus Remote Access Portal"
-
-gh repo create your-org/nucleus-remote-access-portal \
-  --private \
-  --description "Industrial remote support platform for Nucleus edge devices"
-
-git remote add origin https://github.com/your-org/nucleus-remote-access-portal.git
-git branch -M main
-git push -u origin main
+gh repo create JuanM2209/agente-rs-platform \
+  --public \
+  --description "Industrial remote support platform and Agente-RS edge agent"
 ```
+
+Published container images:
+
+- `ghcr.io/juanm2209/nucleus-api:latest`
+- `ghcr.io/juanm2209/agente-rs:latest`
 
 ---
 

@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { getActiveSessions, stopSession } from "@/lib/api";
 import { StatusOrb } from "@/components/ui/StatusOrb";
 import type { Session } from "@/types";
-import { formatDistanceToNow, format, differenceInSeconds } from "date-fns";
+import { formatDistanceToNow, differenceInSeconds } from "date-fns";
 import { clsx } from "clsx";
 
 function TTLBadge({ expiresAt }: { expiresAt: string }) {
@@ -40,6 +40,97 @@ function TTLBadge({ expiresAt }: { expiresAt: string }) {
     )}>
       {display}
     </span>
+  );
+}
+
+const telemetryMeta: Record<string, { label: string; dot: string; text: string; bg: string }> = {
+  pending: {
+    label: "Pending",
+    dot: "bg-outline",
+    text: "text-on-surface-variant",
+    bg: "bg-surface-container-highest",
+  },
+  reachable: {
+    label: "Reachable",
+    dot: "bg-tertiary",
+    text: "text-tertiary",
+    bg: "bg-tertiary/10",
+  },
+  degraded: {
+    label: "Degraded",
+    dot: "bg-amber-400",
+    text: "text-amber-400",
+    bg: "bg-amber-400/10",
+  },
+  unreachable: {
+    label: "Unreachable",
+    dot: "bg-error",
+    text: "text-error",
+    bg: "bg-error/10",
+  },
+  stopped: {
+    label: "Stopped",
+    dot: "bg-outline",
+    text: "text-outline",
+    bg: "bg-surface-container-highest",
+  },
+};
+
+function ExportTelemetry({ session }: { session: Session }) {
+  if (session.delivery_mode !== "export") return null;
+
+  const telemetry = session.telemetry;
+  const meta = telemetryMeta[telemetry?.connection_status || "pending"] || telemetryMeta.pending;
+  const checkedAt = telemetry?.last_checked_at ? new Date(telemetry.last_checked_at) : null;
+  const stale = checkedAt ? Date.now() - checkedAt.getTime() > 60_000 : false;
+
+  return (
+    <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+      <div className="bg-surface-container-highest rounded-lg px-3 py-2">
+        <p className="text-[10px] font-medium text-on-surface-variant uppercase tracking-wider mb-1">
+          Port Status
+        </p>
+        <div className="flex items-center gap-2">
+          <span className={clsx("w-2 h-2 rounded-full", meta.dot, stale && "animate-pulse")} />
+          <span className={clsx("text-xs font-medium", meta.text)}>
+            {stale ? "Stale Telemetry" : meta.label}
+          </span>
+        </div>
+      </div>
+
+      <div className="bg-surface-container-highest rounded-lg px-3 py-2">
+        <p className="text-[10px] font-medium text-on-surface-variant uppercase tracking-wider mb-1">
+          Latency
+        </p>
+        <p className="font-technical text-sm text-on-surface">
+          {typeof telemetry?.latency_ms === "number" ? `${telemetry.latency_ms} ms` : "Waiting..."}
+        </p>
+      </div>
+
+      <div className="bg-surface-container-highest rounded-lg px-3 py-2">
+        <p className="text-[10px] font-medium text-on-surface-variant uppercase tracking-wider mb-1">
+          Last Check
+        </p>
+        <p className="text-xs text-on-surface-variant">
+          {checkedAt ? formatDistanceToNow(checkedAt, { addSuffix: true }) : "Not reported yet"}
+        </p>
+      </div>
+
+      {(session.remote_host || telemetry?.last_error) && (
+        <div className="md:col-span-3 flex flex-wrap items-center gap-3 text-xs text-on-surface-variant">
+          {session.remote_host && (
+            <span className="font-technical bg-surface-container-highest px-2.5 py-1 rounded">
+              Remote {session.remote_host}:{session.remote_port || session.endpoint?.port || "?"}
+            </span>
+          )}
+          {telemetry?.last_error && (
+            <span className="text-error">
+              Last error: {telemetry.last_error}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -151,6 +242,7 @@ export default function SessionsPage() {
                         ? `Local :${session.local_port}`
                         : "Web Access"}
                     </p>
+                    <ExportTelemetry session={session} />
                   </div>
                 </div>
 

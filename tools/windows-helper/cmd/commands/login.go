@@ -22,8 +22,15 @@ type loginRequest struct {
 
 // loginResponse is the expected JSON envelope from the auth endpoint.
 type loginResponse struct {
-	Token     string    `json:"token"`
-	ExpiresAt time.Time `json:"expires_at"`
+	Token       string    `json:"token"`
+	AccessToken string    `json:"access_token"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+type loginEnvelope struct {
+	Success bool          `json:"success"`
+	Data    loginResponse `json:"data"`
+	Error   string        `json:"error"`
 }
 
 // NewLoginCmd returns the `login` subcommand.
@@ -95,15 +102,26 @@ func authenticate(apiURL, email, password string) (string, error) {
 		return "", fmt.Errorf("server returned HTTP %d", resp.StatusCode)
 	}
 
-	var loginResp loginResponse
-	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
+	var envelope loginEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
 		return "", fmt.Errorf("decoding server response: %w", err)
 	}
-	if loginResp.Token == "" {
+	if !envelope.Success {
+		if envelope.Error == "" {
+			envelope.Error = "login failed"
+		}
+		return "", fmt.Errorf("%s", envelope.Error)
+	}
+
+	token := envelope.Data.Token
+	if token == "" {
+		token = envelope.Data.AccessToken
+	}
+	if token == "" {
 		return "", fmt.Errorf("server returned an empty token")
 	}
 
-	return loginResp.Token, nil
+	return token, nil
 }
 
 // readPassword reads a password from the terminal without echoing it.

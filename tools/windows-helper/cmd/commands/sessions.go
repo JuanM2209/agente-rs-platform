@@ -51,7 +51,7 @@ func runSessions() error {
 
 func printSessionsTable(sessions []internal.Session) {
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"Session ID", "Device", "Remote Host", "Port", "TTL", "Status"})
+	table.SetHeader([]string{"Session ID", "Device", "Remote Host", "Port", "TTL", "Status", "Latency"})
 	table.SetAutoWrapText(false)
 	table.SetBorder(true)
 	table.SetRowLine(false)
@@ -75,10 +75,18 @@ func printSessionsTable(sessions []internal.Session) {
 			strconv.Itoa(s.RemotePort),
 			ttlStr,
 			status,
+			sessionLatency(s),
 		})
 	}
 
 	table.Render()
+}
+
+func sessionLatency(session internal.Session) string {
+	if session.Telemetry == nil || session.Telemetry.LatencyMS == nil {
+		return "pending"
+	}
+	return fmt.Sprintf("%d ms", *session.Telemetry.LatencyMS)
 }
 
 // formatTTL converts a duration into a human-readable countdown string.

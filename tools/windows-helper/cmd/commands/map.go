@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/nucleus-portal/windows-helper/internal"
 	"github.com/spf13/cobra"
@@ -46,7 +47,7 @@ func runMap(mapper *internal.Mapper, sessionID string, localPort int) error {
 	}
 
 	if !internal.ValidateToken() {
-		return fmt.Errorf("not authenticated or token expired — run 'nucleus-helper login' first")
+		return fmt.Errorf("not authenticated or token expired - run 'nucleus-helper login' first")
 	}
 
 	client, err := internal.NewAPIClientFromConfig()
@@ -54,7 +55,6 @@ func runMap(mapper *internal.Mapper, sessionID string, localPort int) error {
 		return err
 	}
 
-	// Fetch the target session details from the API.
 	sessions, err := client.GetActiveSessions()
 	if err != nil {
 		return fmt.Errorf("fetching sessions: %w", err)
@@ -69,7 +69,10 @@ func runMap(mapper *internal.Mapper, sessionID string, localPort int) error {
 	}
 
 	if target == nil {
-		return fmt.Errorf("session %q not found or not active — run 'nucleus-helper sessions' to list active sessions", sessionID)
+		return fmt.Errorf("session %q not found or not active - run 'nucleus-helper sessions' to list active sessions", sessionID)
+	}
+	if target.RemoteHost == "" {
+		return fmt.Errorf("session %q does not expose a remote host yet", sessionID)
 	}
 
 	if err := mapper.StartMapping(
@@ -82,26 +85,86 @@ func runMap(mapper *internal.Mapper, sessionID string, localPort int) error {
 		return fmt.Errorf("starting mapping: %w", err)
 	}
 
-	fmt.Printf("Mapping active: 127.0.0.1:%d  →  %s:%d\n",
+	stopReporter := make(chan struct{})
+	go reportTelemetryLoop(stopReporter, mapper, client, target.ID)
+
+	fmt.Printf("Mapping active: 127.0.0.1:%d -> %s:%d\n",
 		localPort, target.RemoteHost, target.RemotePort)
 	fmt.Printf("Session: %s  |  Device: %s\n", target.ID, target.DeviceName)
 	fmt.Printf("Expires: %s\n", target.ExpiresAt.Local().Format("2006-01-02 15:04:05"))
 	fmt.Println("Press Ctrl+C to stop the mapping.")
 
-	// Block until the user interrupts or the session expires.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
-	select {
-	case <-sigCh:
-		fmt.Println("\nStopping mapping…")
-		if stopErr := mapper.StopMapping(sessionID); stopErr != nil {
-			// Already expired and cleaned up by the TTL watcher — not an error.
-			fmt.Println("Mapping already stopped (session may have expired).")
-		} else {
-			fmt.Println("Mapping stopped.")
+	checkTicker := time.NewTicker(2 * time.Second)
+	defer checkTicker.Stop()
+
+	for {
+		select {
+		case <-sigCh:
+			close(stopReporter)
+			fmt.Println("\nStopping mapping...")
+			if stopErr := mapper.StopMapping(sessionID); stopErr != nil {
+				fmt.Println("Mapping already stopped (session may have expired).")
+			} else {
+				fmt.Println("Mapping stopped.")
+			}
+			if stopErr := client.StopSession(sessionID); stopErr != nil {
+				fmt.Printf("Warning: failed to stop remote session: %v\n", stopErr)
+			}
+			return nil
+		case <-checkTicker.C:
+			if _, ok := mapper.GetMapping(sessionID); !ok {
+				close(stopReporter)
+				fmt.Println("\nMapping ended (session expired or was closed).")
+				return nil
+			}
 		}
 	}
+}
 
-	return nil
+func reportTelemetryLoop(
+	stopCh <-chan struct{},
+	mapper *internal.Mapper,
+	client *internal.APIClient,
+	sessionID string,
+) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	sendTelemetrySnapshot(mapper, client, sessionID)
+
+	for {
+		select {
+		case <-stopCh:
+			return
+		case <-ticker.C:
+			sendTelemetrySnapshot(mapper, client, sessionID)
+		}
+	}
+}
+
+func sendTelemetrySnapshot(mapper *internal.Mapper, client *internal.APIClient, sessionID string) {
+	snapshot, ok := mapper.GetMapping(sessionID)
+	if !ok {
+		return
+	}
+
+	payload := internal.SessionTelemetry{
+		ConnectionStatus: snapshot.ConnectionStatus,
+		LastError:        snapshot.LastError,
+		ProbeSource:      "helper",
+	}
+	if snapshot.LatencyMS > 0 {
+		payload.LatencyMS = &snapshot.LatencyMS
+	}
+	if !snapshot.LastCheckedAt.IsZero() {
+		lastCheckedAt := snapshot.LastCheckedAt
+		payload.LastCheckedAt = &lastCheckedAt
+	}
+
+	if err := client.UpdateSessionTelemetry(sessionID, payload); err != nil {
+		fmt.Printf("Telemetry update warning for %s: %v\n", sessionID, err)
+	}
 }

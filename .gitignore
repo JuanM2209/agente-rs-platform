@@ -48,6 +48,7 @@ redis-data/
 Thumbs.db
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 *~
@@ -61,6 +62,9 @@ dist/
 build/
 *.o
 *.a
+output/
+.playwright-cli/
+apps/web/tsconfig.tsbuildinfo
 
 # === Go ===
 vendor/

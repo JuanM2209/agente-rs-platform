@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import type { Metadata } from "next";
 import { login } from "@/lib/api";
+import { NetworkSphere } from "@/components/login/NetworkSphere";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -33,44 +33,48 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-background flex">
-      {/* Left panel — branding */}
-      <div className="hidden lg:flex lg:w-[480px] flex-col justify-between p-12 bg-surface-container-low border-r border-outline-variant/10">
-        <div className="flex items-center gap-3">
+      {/* Left panel — 3D branding */}
+      <div className="hidden lg:flex lg:w-[520px] flex-col relative overflow-hidden bg-surface-container-low border-r border-outline-variant/10">
+        {/* Logo */}
+        <div className="flex items-center gap-3 p-10 z-10 relative">
           <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center">
             <span className="material-symbols-outlined text-on-primary text-2xl">hub</span>
           </div>
           <span className="font-headline font-bold text-xl text-on-surface">Nucleus</span>
         </div>
 
-        <div>
-          <h1 className="font-headline text-4xl font-extrabold text-on-surface leading-tight mb-4">
-            Industrial Remote<br />
-            <span className="text-primary">Access Platform</span>
+        {/* Headline */}
+        <div className="px-10 z-10 relative">
+          <h1 className="font-headline text-4xl font-extrabold text-on-surface leading-tight mb-3">
+            Nucleus Remote<br />
+            <span className="text-primary">Access Portal</span>
           </h1>
-          <p className="text-on-surface-variant text-base leading-relaxed">
-            Centralized telemetry and secure remote orchestration for thousands of edge devices.
+          <p className="text-on-surface-variant text-sm leading-relaxed max-w-xs">
+            Secure, curated gateway for enterprise industrial operations. Centralized telemetry and remote command center.
           </p>
-
-          <div className="mt-10 space-y-4">
-            {[
-              { icon: "search", text: "Search-first device access" },
-              { icon: "lock", text: "Session-based security with full audit trail" },
-              { icon: "settings_ethernet", text: "Modbus serial bridge on demand" },
-              { icon: "verified_user", text: "Multi-tenant RBAC enforcement" },
-            ].map((item) => (
-              <div key={item.icon} className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-primary text-base">{item.icon}</span>
-                </div>
-                <span className="text-sm text-on-surface-variant">{item.text}</span>
-              </div>
-            ))}
+          {/* Security badges */}
+          <div className="flex gap-3 mt-5">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-tertiary/30 bg-tertiary/5">
+              <span className="material-symbols-outlined text-tertiary text-sm">verified_user</span>
+              <span className="text-xs text-tertiary font-medium">ISO 27001</span>
+            </div>
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-primary/30 bg-primary/5">
+              <span className="material-symbols-outlined text-primary text-sm">lock</span>
+              <span className="text-xs text-primary font-medium">AES-256</span>
+            </div>
           </div>
         </div>
 
-        <p className="text-xs text-on-surface-variant/40 font-technical">
-          v1.0.0 © 2024 Nucleus Systems
-        </p>
+        {/* 3D Sphere — fills remaining space */}
+        <div className="flex-1 relative min-h-0 mt-4">
+          <NetworkSphere />
+        </div>
+
+        {/* Status bar */}
+        <div className="px-10 pb-8 z-10 relative flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-tertiary animate-pulse" />
+          <span className="text-xs font-technical text-tertiary tracking-widest uppercase">System Status: Nominal</span>
+        </div>
       </div>
 
       {/* Right panel — login form */}
@@ -86,11 +90,11 @@ export default function LoginPage() {
 
           <div className="bg-surface-container-high rounded-xl p-8">
             <h2 className="font-headline text-2xl font-bold text-on-surface mb-1">
-              {step === "credentials" ? "Sign in" : "Verify identity"}
+              {step === "credentials" ? "Operator Authentication" : "Verify identity"}
             </h2>
             <p className="text-sm text-on-surface-variant mb-8">
               {step === "credentials"
-                ? "Enter your credentials to access the portal"
+                ? "Enter your credentials to access the portal."
                 : `MFA code sent to ${email}`}
             </p>
 
@@ -104,8 +108,8 @@ export default function LoginPage() {
             {step === "credentials" ? (
               <form onSubmit={handleCredentials} className="space-y-5">
                 <div>
-                  <label className="block text-sm text-on-surface-variant mb-2 font-medium">
-                    Email address
+                  <label className="block text-xs text-on-surface-variant mb-2 font-medium uppercase tracking-wider">
+                    Work Email
                   </label>
                   <div className="relative">
                     <span className="absolute left-4 top-1/2 -translate-y-1/2 material-symbols-outlined text-outline text-lg">
@@ -116,16 +120,21 @@ export default function LoginPage() {
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       required
-                      placeholder="operator@company.com"
+                      placeholder="operator@nexus-corp.com"
                       className="w-full bg-surface-container-highest rounded-xl pl-11 pr-4 py-4 text-on-surface placeholder:text-outline border-b-2 border-transparent focus:border-primary outline-none transition-colors text-sm"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-sm text-on-surface-variant mb-2 font-medium">
-                    Password
-                  </label>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-xs text-on-surface-variant font-medium uppercase tracking-wider">
+                      Password
+                    </label>
+                    <button type="button" className="text-xs text-primary hover:text-primary-fixed-dim transition-colors">
+                      Forgot Password?
+                    </button>
+                  </div>
                   <div className="relative">
                     <span className="absolute left-4 top-1/2 -translate-y-1/2 material-symbols-outlined text-outline text-lg">
                       lock
@@ -141,15 +150,10 @@ export default function LoginPage() {
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between text-sm">
-                  <label className="flex items-center gap-2 text-on-surface-variant cursor-pointer">
-                    <input type="checkbox" className="rounded" />
-                    Remember this device
-                  </label>
-                  <button type="button" className="text-primary hover:text-primary-fixed-dim transition-colors">
-                    Forgot password?
-                  </button>
-                </div>
+                <label className="flex items-center gap-2 text-sm text-on-surface-variant cursor-pointer">
+                  <input type="checkbox" className="rounded" />
+                  Remember device for 30 days
+                </label>
 
                 <button
                   type="submit"
@@ -157,6 +161,20 @@ export default function LoginPage() {
                   className="w-full gradient-primary text-on-primary font-bold py-4 rounded-xl hover:shadow-primary transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed font-body text-sm uppercase tracking-wide"
                 >
                   {loading ? "Authenticating..." : "Sign In"}
+                </button>
+
+                <div className="relative flex items-center gap-3">
+                  <div className="flex-1 h-px bg-outline-variant/20" />
+                  <span className="text-xs text-on-surface-variant/40 uppercase tracking-wider">or identity provider</span>
+                  <div className="flex-1 h-px bg-outline-variant/20" />
+                </div>
+
+                <button
+                  type="button"
+                  className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl border border-outline-variant/20 bg-surface-container text-on-surface-variant text-sm hover:bg-surface-container-high transition-colors"
+                >
+                  <span className="material-symbols-outlined text-base">shield</span>
+                  Sign in with SAML
                 </button>
               </form>
             ) : (
@@ -192,13 +210,12 @@ export default function LoginPage() {
 
             <div className="mt-6 pt-6 border-t border-outline-variant/10 text-center">
               <p className="text-xs text-on-surface-variant/60">
-                This portal is for authorized personnel only.
-                All access is logged and audited.
+                Unauthorized access is strictly prohibited and monitored.<br />
+                All sessions are logged for audit compliance.
               </p>
             </div>
           </div>
 
-          {/* Dev quick login hint */}
           {process.env.NODE_ENV === "development" && (
             <div className="mt-4 p-4 rounded-xl bg-primary/5 border border-primary/10">
               <p className="text-xs text-on-surface-variant font-technical">

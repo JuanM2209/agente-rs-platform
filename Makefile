@@ -84,10 +84,10 @@ build-api: ## Build API Docker image only
 build-web: ## Build web Docker image only
 	docker compose build web
 
-build-agent: ## Build agent Docker image (linux/amd64 + linux/arm/v7)
+build-agent: ## Build agente-rs Docker image (linux/amd64 + linux/arm/v7)
 	docker buildx build \
 		--platform linux/amd64,linux/arm/v7 \
-		-t nucleus-portal/agent:latest \
+		-t agente-rs:latest \
 		apps/agent/
 
 build-windows-helper: ## Build Windows helper CLI

@@ -1,70 +1,17 @@
-version: '3.8'
-
 services:
-  agent-n1001:
-    build: .
+  agente-rs:
+    image: ghcr.io/juanm2209/agente-rs:latest
+    container_name: agente-rs
+    network_mode: host
+    volumes:
+      - /data/nucleus/factory:/data/nucleus/factory:ro
+      # Optional if serial bridge support is needed and mbusd exists on host:
+      # - /usr/local/bin/mbusd:/usr/local/bin/mbusd:ro
     environment:
-      DEVICE_ID: "N-1001"
-      CONTROL_PLANE_URL: "ws://api:8080/ws/agent"
-      AGENT_SECRET: "dev-secret"
-      TENANT_ID: "tenant-alpha"
-      LOG_LEVEL: "debug"
-      HEARTBEAT_INTERVAL: "10s"
-      INVENTORY_SCAN_INTERVAL: "30s"
-    depends_on:
-      - api
+      CONTROL_PLANE_URL: "wss://api.datadesng.com/ws/agent"
+      AGENT_SECRET: "replace-with-real-agent-secret"
+      TENANT_ID: "test-org"
+      LOG_LEVEL: "info"
+      HEARTBEAT_INTERVAL: "30s"
+      INVENTORY_SCAN_INTERVAL: "60s"
     restart: unless-stopped
-    networks:
-      - nucleus-net
-
-  agent-n1002:
-    build: .
-    environment:
-      DEVICE_ID: "N-1002"
-      CONTROL_PLANE_URL: "ws://api:8080/ws/agent"
-      AGENT_SECRET: "dev-secret"
-      TENANT_ID: "tenant-alpha"
-      LOG_LEVEL: "debug"
-      HEARTBEAT_INTERVAL: "10s"
-      INVENTORY_SCAN_INTERVAL: "30s"
-    depends_on:
-      - api
-    restart: unless-stopped
-    networks:
-      - nucleus-net
-
-  agent-n1003:
-    build: .
-    environment:
-      DEVICE_ID: "N-1003"
-      CONTROL_PLANE_URL: "ws://api:8080/ws/agent"
-      AGENT_SECRET: "dev-secret"
-      TENANT_ID: "tenant-alpha"
-      LOG_LEVEL: "debug"
-      HEARTBEAT_INTERVAL: "10s"
-      INVENTORY_SCAN_INTERVAL: "30s"
-    depends_on:
-      - api
-    restart: unless-stopped
-    networks:
-      - nucleus-net
-
-  agent-n1004:
-    build: .
-    environment:
-      DEVICE_ID: "N-1004"
-      CONTROL_PLANE_URL: "ws://api:8080/ws/agent"
-      AGENT_SECRET: "dev-secret"
-      TENANT_ID: "tenant-alpha"
-      LOG_LEVEL: "debug"
-      HEARTBEAT_INTERVAL: "10s"
-      INVENTORY_SCAN_INTERVAL: "30s"
-    depends_on:
-      - api
-    restart: unless-stopped
-    networks:
-      - nucleus-net
-
-networks:
-  nucleus-net:
-    external: true

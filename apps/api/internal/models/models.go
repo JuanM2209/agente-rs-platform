@@ -93,6 +93,16 @@ type Endpoint struct {
 	Enabled  bool         `json:"enabled"   db:"enabled"`
 }
 
+// SessionTelemetry captures the health of an exported or web session from the
+// latest probe source.
+type SessionTelemetry struct {
+	ConnectionStatus string     `json:"connection_status,omitempty"`
+	LatencyMS        *int       `json:"latency_ms,omitempty"`
+	LastCheckedAt    *time.Time `json:"last_checked_at,omitempty"`
+	LastError        string     `json:"last_error,omitempty"`
+	ProbeSource      string     `json:"probe_source,omitempty"`
+}
+
 // Session tracks an active or historical remote access session.
 type Session struct {
 	ID                   string            `json:"id"                     db:"id"`
@@ -102,6 +112,8 @@ type Session struct {
 	TenantID             string            `json:"tenant_id"              db:"tenant_id"`
 	Status               SessionStatus     `json:"status"                 db:"status"`
 	LocalPort            int               `json:"local_port"             db:"local_port"`
+	RemotePort           int               `json:"remote_port,omitempty"  db:"remote_port"`
+	RemoteHost           string            `json:"remote_host,omitempty"`
 	DeliveryMode         DeliveryMode      `json:"delivery_mode"          db:"delivery_mode"`
 	TTLSeconds           int               `json:"ttl_seconds"            db:"ttl_seconds"`
 	IdleTimeoutSeconds   int               `json:"idle_timeout_seconds"   db:"idle_timeout_seconds"`
@@ -109,7 +121,13 @@ type Session struct {
 	ExpiresAt            *time.Time        `json:"expires_at"             db:"expires_at"`
 	StoppedAt            *time.Time        `json:"stopped_at"             db:"stopped_at"`
 	StopReason           string            `json:"stop_reason"            db:"stop_reason"`
+	TunnelURL            string            `json:"tunnel_url,omitempty"   db:"tunnel_url"`
 	AuditData            json.RawMessage   `json:"audit_data"             db:"audit_data"`
+	LastActivityAt       *time.Time        `json:"last_activity_at,omitempty" db:"last_activity_at"`
+	Telemetry            *SessionTelemetry `json:"telemetry,omitempty"`
+	Device               *Device           `json:"device,omitempty"`
+	Endpoint             *Endpoint         `json:"endpoint,omitempty"`
+	User                 *User             `json:"user,omitempty"`
 }
 
 // ExportHistory records completed export-mode sessions for auditing.
@@ -126,7 +144,13 @@ type ExportHistory struct {
 	StopReason    string          `json:"stop_reason"    db:"stop_reason"`
 	LocalBindPort int             `json:"local_bind_port" db:"local_bind_port"`
 	DeliveryMode  DeliveryMode    `json:"delivery_mode"  db:"delivery_mode"`
+	DurationSeconds int           `json:"duration_seconds,omitempty" db:"duration_seconds"`
+	BytesTransferred int64        `json:"bytes_transferred,omitempty" db:"bytes_transferred"`
 	Metadata      json.RawMessage `json:"metadata"       db:"metadata"`
+	Telemetry     *SessionTelemetry `json:"telemetry,omitempty"`
+	Device        *Device         `json:"device,omitempty"`
+	Endpoint      *Endpoint       `json:"endpoint,omitempty"`
+	User          *User           `json:"user,omitempty"`
 }
 
 // BridgeProfile holds serial-to-TCP bridge configuration for a device.

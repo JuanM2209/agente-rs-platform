@@ -3,7 +3,9 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -15,6 +17,11 @@ import (
 	"github.com/nucleus-portal/api/internal/ws"
 	"github.com/rs/zerolog/log"
 )
+
+type sessionAuditEnvelope struct {
+	RemoteHost string                   `json:"remote_host,omitempty"`
+	Telemetry  *models.SessionTelemetry `json:"telemetry,omitempty"`
+}
 
 // Handler holds dependencies for session HTTP handlers.
 type Handler struct {
@@ -32,6 +39,14 @@ type createSessionRequest struct {
 	DeliveryMode       string `json:"delivery_mode"`
 	TTLSeconds         int    `json:"ttl_seconds"`
 	IdleTimeoutSeconds int    `json:"idle_timeout_seconds"`
+}
+
+type updateTelemetryRequest struct {
+	ConnectionStatus string     `json:"connection_status"`
+	LatencyMS        *int       `json:"latency_ms"`
+	LastCheckedAt    *time.Time `json:"last_checked_at"`
+	LastError        string     `json:"last_error"`
+	ProbeSource      string     `json:"probe_source"`
 }
 
 // CreateSession handles POST /api/v1/devices/:deviceId/sessions.
@@ -63,13 +78,12 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.TTLSeconds <= 0 {
-		req.TTLSeconds = 3600 // 1 hour default
+		req.TTLSeconds = 3600
 	}
 	if req.IdleTimeoutSeconds <= 0 {
-		req.IdleTimeoutSeconds = 900 // 15 min default
+		req.IdleTimeoutSeconds = 900
 	}
 
-	// Verify device and endpoint belong to tenant.
 	device, endpoint, err := h.resolveDeviceAndEndpoint(r.Context(), deviceID, req.EndpointID, tenantID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -87,6 +101,14 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !endpoint.Enabled {
+		writeJSON(w, http.StatusConflict, models.APIResponse{
+			Success: false,
+			Error:   "endpoint is disabled",
+		})
+		return
+	}
+
 	if !h.hub.IsConnected(deviceID) {
 		writeJSON(w, http.StatusServiceUnavailable, models.APIResponse{
 			Success: false,
@@ -98,13 +120,36 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := uuid.New().String()
 	now := time.Now().UTC()
 	expiresAt := now.Add(time.Duration(req.TTLSeconds) * time.Second)
+	remoteHost := strings.TrimSpace(device.IPAddress)
+	telemetry := &models.SessionTelemetry{
+		ConnectionStatus: "pending",
+		ProbeSource:      "helper",
+	}
+	if deliveryMode == models.DeliveryModeWeb {
+		telemetry.ProbeSource = "system"
+	}
 
-	// Persist session before sending command so it exists even if the ack is lost.
+	auditData, err := marshalSessionAudit(remoteHost, telemetry)
+	if err != nil {
+		log.Error().Err(err).Str("session_id", sessionID).Msg("CreateSession: marshal audit data")
+		writeJSON(w, http.StatusInternalServerError, models.APIResponse{
+			Success: false,
+			Error:   "failed to build session metadata",
+		})
+		return
+	}
+
+	tunnelURL := ""
+	if deliveryMode == models.DeliveryModeWeb {
+		tunnelURL = buildWebAccessURL(endpoint.Protocol, remoteHost, endpoint.Port)
+	}
+
 	const insertQ = `
 		INSERT INTO sessions
 			(id, device_id, endpoint_id, user_id, tenant_id, status, local_port,
-			 delivery_mode, ttl_seconds, idle_timeout_seconds, started_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+			 remote_port, delivery_mode, ttl_seconds, idle_timeout_seconds,
+			 started_at, expires_at, tunnel_url, audit_data)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
 
 	_, err = h.db.Exec(r.Context(), insertQ,
 		sessionID,
@@ -114,11 +159,14 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		tenantID,
 		models.SessionStatusActive,
 		endpoint.Port,
+		endpoint.Port,
 		string(deliveryMode),
 		req.TTLSeconds,
 		req.IdleTimeoutSeconds,
 		now,
 		expiresAt,
+		tunnelURL,
+		auditData,
 	)
 	if err != nil {
 		log.Error().Err(err).Str("session_id", sessionID).Msg("CreateSession: db insert failed")
@@ -145,7 +193,6 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.hub.SendCommand(deviceID, cmd); err != nil {
 		log.Error().Err(err).Str("device_id", deviceID).Msg("CreateSession: send command failed")
-		// Session is already in DB; agent will reconcile on reconnect.
 	}
 
 	session := models.Session{
@@ -156,11 +203,18 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		TenantID:           tenantID,
 		Status:             models.SessionStatusActive,
 		LocalPort:          endpoint.Port,
+		RemotePort:         endpoint.Port,
+		RemoteHost:         remoteHost,
 		DeliveryMode:       deliveryMode,
 		TTLSeconds:         req.TTLSeconds,
 		IdleTimeoutSeconds: req.IdleTimeoutSeconds,
 		StartedAt:          now,
 		ExpiresAt:          &expiresAt,
+		TunnelURL:          tunnelURL,
+		AuditData:          auditData,
+		Telemetry:          telemetry,
+		Device:             device,
+		Endpoint:           endpoint,
 	}
 
 	writeJSON(w, http.StatusCreated, models.APIResponse{
@@ -175,7 +229,6 @@ func (h *Handler) StopSession(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.GetTenantID(r.Context())
 	userID := middleware.GetUserID(r.Context())
 
-	// Fetch session to obtain device_id and verify ownership.
 	session, err := h.fetchSession(r.Context(), sessionID, tenantID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -216,7 +269,7 @@ func (h *Handler) StopSession(w http.ResponseWriter, r *http.Request) {
 		WHERE id = $4`
 
 	if _, dbErr := h.db.Exec(r.Context(), updateQ,
-		models.SessionStatusStopped, now, "user_requested", sessionID,
+		models.SessionStatusStopped, now, "user_stopped", sessionID,
 	); dbErr != nil {
 		log.Error().Err(dbErr).Str("session_id", sessionID).Msg("StopSession: db update failed")
 		writeJSON(w, http.StatusInternalServerError, models.APIResponse{
@@ -226,7 +279,10 @@ func (h *Handler) StopSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve device string ID for WS command.
+	if err := h.recordHistory(r.Context(), session, now, "user_stopped"); err != nil {
+		log.Warn().Err(err).Str("session_id", sessionID).Msg("StopSession: failed to record history")
+	}
+
 	var deviceStringID string
 	_ = h.db.QueryRow(r.Context(), `SELECT device_id FROM devices WHERE id = $1`, session.DeviceID).Scan(&deviceStringID)
 
@@ -249,18 +305,118 @@ func (h *Handler) StopSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// UpdateSessionTelemetry handles POST /api/v1/sessions/:sessionId/telemetry.
+func (h *Handler) UpdateSessionTelemetry(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "sessionId")
+	tenantID := middleware.GetTenantID(r.Context())
+	userID := middleware.GetUserID(r.Context())
+
+	session, err := h.fetchSession(r.Context(), sessionID, tenantID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeJSON(w, http.StatusNotFound, models.APIResponse{
+				Success: false,
+				Error:   "session not found",
+			})
+			return
+		}
+		log.Error().Err(err).Str("session_id", sessionID).Msg("UpdateSessionTelemetry: fetch session")
+		writeJSON(w, http.StatusInternalServerError, models.APIResponse{
+			Success: false,
+			Error:   "internal server error",
+		})
+		return
+	}
+
+	if session.UserID != userID {
+		writeJSON(w, http.StatusForbidden, models.APIResponse{
+			Success: false,
+			Error:   "forbidden",
+		})
+		return
+	}
+
+	var req updateTelemetryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, models.APIResponse{
+			Success: false,
+			Error:   "invalid request body",
+		})
+		return
+	}
+
+	checkedAt := time.Now().UTC()
+	if req.LastCheckedAt != nil {
+		checkedAt = req.LastCheckedAt.UTC()
+	}
+
+	status := strings.TrimSpace(req.ConnectionStatus)
+	if status == "" {
+		status = "pending"
+	}
+
+	telemetry := &models.SessionTelemetry{
+		ConnectionStatus: status,
+		LatencyMS:        req.LatencyMS,
+		LastCheckedAt:    &checkedAt,
+		LastError:        strings.TrimSpace(req.LastError),
+		ProbeSource:      strings.TrimSpace(req.ProbeSource),
+	}
+	if telemetry.ProbeSource == "" {
+		telemetry.ProbeSource = "helper"
+	}
+
+	audit := parseSessionAudit(session.AuditData)
+	audit.Telemetry = telemetry
+
+	rawAudit, err := json.Marshal(audit)
+	if err != nil {
+		log.Error().Err(err).Str("session_id", sessionID).Msg("UpdateSessionTelemetry: marshal audit data")
+		writeJSON(w, http.StatusInternalServerError, models.APIResponse{
+			Success: false,
+			Error:   "failed to encode telemetry",
+		})
+		return
+	}
+
+	const updateQ = `
+		UPDATE sessions
+		SET audit_data = $1, last_activity_at = $2
+		WHERE id = $3`
+
+	if _, err := h.db.Exec(r.Context(), updateQ, rawAudit, checkedAt, sessionID); err != nil {
+		log.Error().Err(err).Str("session_id", sessionID).Msg("UpdateSessionTelemetry: db update failed")
+		writeJSON(w, http.StatusInternalServerError, models.APIResponse{
+			Success: false,
+			Error:   "failed to persist telemetry",
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, models.APIResponse{
+		Success: true,
+		Data:    telemetry,
+	})
+}
+
 // ListActiveSessions handles GET /api/v1/me/active-sessions.
 func (h *Handler) ListActiveSessions(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r.Context())
 	tenantID := middleware.GetTenantID(r.Context())
 
 	const q = `
-		SELECT id, device_id, endpoint_id, user_id, tenant_id, status, local_port,
-		       delivery_mode, ttl_seconds, idle_timeout_seconds, started_at, expires_at,
-		       stopped_at, stop_reason, audit_data
-		FROM sessions
-		WHERE user_id = $1 AND tenant_id = $2 AND status = 'active'
-		ORDER BY started_at DESC`
+		SELECT s.id, s.device_id, s.endpoint_id, s.user_id, s.tenant_id, s.status,
+		       s.local_port, s.remote_port, s.delivery_mode, s.ttl_seconds,
+		       s.idle_timeout_seconds, s.started_at, s.expires_at, s.last_activity_at,
+		       s.stopped_at, s.stop_reason, s.tunnel_url, s.audit_data,
+		       d.id, d.tenant_id, d.site_id, d.device_id, d.display_name, d.status,
+		       d.last_seen, d.firmware_version, d.ip_address, d.created_at,
+		       e.id, e.device_id, e.type, e.port, e.label, e.protocol, e.enabled
+		FROM sessions s
+		JOIN devices d ON d.id = s.device_id
+		JOIN endpoints e ON e.id = s.endpoint_id
+		WHERE s.user_id = $1 AND s.tenant_id = $2 AND s.status = 'active'
+		ORDER BY s.started_at DESC`
 
 	rows, err := h.db.Query(r.Context(), q, userID, tenantID)
 	if err != nil {
@@ -276,15 +432,27 @@ func (h *Handler) ListActiveSessions(w http.ResponseWriter, r *http.Request) {
 	sessions := make([]models.Session, 0)
 	for rows.Next() {
 		var s models.Session
+		var d models.Device
+		var e models.Endpoint
+
 		if scanErr := rows.Scan(
-			&s.ID, &s.DeviceID, &s.EndpointID, &s.UserID, &s.TenantID,
-			&s.Status, &s.LocalPort, &s.DeliveryMode, &s.TTLSeconds,
-			&s.IdleTimeoutSeconds, &s.StartedAt, &s.ExpiresAt,
-			&s.StoppedAt, &s.StopReason, &s.AuditData,
+			&s.ID, &s.DeviceID, &s.EndpointID, &s.UserID, &s.TenantID, &s.Status,
+			&s.LocalPort, &s.RemotePort, &s.DeliveryMode, &s.TTLSeconds,
+			&s.IdleTimeoutSeconds, &s.StartedAt, &s.ExpiresAt, &s.LastActivityAt,
+			&s.StoppedAt, &s.StopReason, &s.TunnelURL, &s.AuditData,
+			&d.ID, &d.TenantID, &d.SiteID, &d.DeviceID, &d.DisplayName, &d.Status,
+			&d.LastSeen, &d.FirmwareVersion, &d.IPAddress, &d.CreatedAt,
+			&e.ID, &e.DeviceID, &e.Type, &e.Port, &e.Label, &e.Protocol, &e.Enabled,
 		); scanErr != nil {
 			log.Error().Err(scanErr).Msg("ListActiveSessions: scan error")
 			continue
 		}
+
+		audit := parseSessionAudit(s.AuditData)
+		s.RemoteHost = audit.RemoteHost
+		s.Telemetry = audit.Telemetry
+		s.Device = &d
+		s.Endpoint = &e
 		sessions = append(sessions, s)
 	}
 
@@ -338,6 +506,10 @@ func (h *Handler) ListExportHistory(w http.ResponseWriter, r *http.Request) {
 		); scanErr != nil {
 			log.Error().Err(scanErr).Msg("ListExportHistory: scan error")
 			continue
+		}
+
+		if telemetry := parseHistoryTelemetry(eh.Metadata); telemetry != nil {
+			eh.Telemetry = telemetry
 		}
 		history = append(history, eh)
 	}
@@ -402,8 +574,9 @@ func (h *Handler) resolveDeviceAndEndpoint(
 func (h *Handler) fetchSession(ctx context.Context, sessionID, tenantID string) (*models.Session, error) {
 	const q = `
 		SELECT id, device_id, endpoint_id, user_id, tenant_id, status, local_port,
-		       delivery_mode, ttl_seconds, idle_timeout_seconds, started_at, expires_at,
-		       stopped_at, stop_reason, audit_data
+		       remote_port, delivery_mode, ttl_seconds, idle_timeout_seconds,
+		       started_at, expires_at, last_activity_at, stopped_at, stop_reason,
+		       tunnel_url, audit_data
 		FROM sessions
 		WHERE id = $1 AND tenant_id = $2
 		LIMIT 1`
@@ -411,11 +584,101 @@ func (h *Handler) fetchSession(ctx context.Context, sessionID, tenantID string) 
 	s := &models.Session{}
 	err := h.db.QueryRow(ctx, q, sessionID, tenantID).Scan(
 		&s.ID, &s.DeviceID, &s.EndpointID, &s.UserID, &s.TenantID,
-		&s.Status, &s.LocalPort, &s.DeliveryMode, &s.TTLSeconds,
-		&s.IdleTimeoutSeconds, &s.StartedAt, &s.ExpiresAt,
-		&s.StoppedAt, &s.StopReason, &s.AuditData,
+		&s.Status, &s.LocalPort, &s.RemotePort, &s.DeliveryMode,
+		&s.TTLSeconds, &s.IdleTimeoutSeconds, &s.StartedAt, &s.ExpiresAt,
+		&s.LastActivityAt, &s.StoppedAt, &s.StopReason, &s.TunnelURL, &s.AuditData,
 	)
-	return s, err
+	if err != nil {
+		return nil, err
+	}
+
+	audit := parseSessionAudit(s.AuditData)
+	s.RemoteHost = audit.RemoteHost
+	s.Telemetry = audit.Telemetry
+	return s, nil
+}
+
+func (h *Handler) recordHistory(
+	ctx context.Context,
+	session *models.Session,
+	stoppedAt time.Time,
+	stopReason string,
+) error {
+	durationSeconds := int(stoppedAt.Sub(session.StartedAt).Seconds())
+	if durationSeconds < 0 {
+		durationSeconds = 0
+	}
+
+	var siteID string
+	_ = h.db.QueryRow(ctx, `SELECT COALESCE(site_id::text, '') FROM devices WHERE id = $1`, session.DeviceID).Scan(&siteID)
+
+	const q = `
+		INSERT INTO export_history
+			(id, session_id, user_id, device_id, endpoint_id, tenant_id, site_id,
+			 started_at, stopped_at, stop_reason, local_bind_port, delivery_mode,
+			 duration_seconds, bytes_transferred, metadata)
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8, $9, $10, $11, $12, $13, $14, $15)`
+
+	_, err := h.db.Exec(ctx, q,
+		uuid.New().String(),
+		session.ID,
+		session.UserID,
+		session.DeviceID,
+		session.EndpointID,
+		session.TenantID,
+		siteID,
+		session.StartedAt,
+		stoppedAt,
+		stopReason,
+		session.LocalPort,
+		string(session.DeliveryMode),
+		durationSeconds,
+		0,
+		session.AuditData,
+	)
+	return err
+}
+
+func buildWebAccessURL(protocol, remoteHost string, port int) string {
+	if remoteHost == "" || port <= 0 {
+		return ""
+	}
+	scheme := "http"
+	if strings.EqualFold(protocol, "https") {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s:%d", scheme, remoteHost, port)
+}
+
+func marshalSessionAudit(remoteHost string, telemetry *models.SessionTelemetry) (json.RawMessage, error) {
+	return json.Marshal(sessionAuditEnvelope{
+		RemoteHost: remoteHost,
+		Telemetry:  telemetry,
+	})
+}
+
+func parseSessionAudit(raw json.RawMessage) sessionAuditEnvelope {
+	if len(raw) == 0 {
+		return sessionAuditEnvelope{}
+	}
+	var envelope sessionAuditEnvelope
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return sessionAuditEnvelope{}
+	}
+	return envelope
+}
+
+func parseHistoryTelemetry(raw json.RawMessage) *models.SessionTelemetry {
+	if len(raw) == 0 {
+		return nil
+	}
+	var payload struct {
+		Telemetry *models.SessionTelemetry `json:"telemetry"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil
+	}
+	return payload.Telemetry
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

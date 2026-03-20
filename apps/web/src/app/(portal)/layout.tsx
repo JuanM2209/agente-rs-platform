@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { SideNav } from "@/components/layout/SideNav";
 import { TopBar } from "@/components/layout/TopBar";
@@ -12,32 +12,32 @@ export default function PortalLayout({
   children: React.ReactNode;
 }) {
   const router = useRouter();
+  const [user, setUser] = useState<User | null>(null);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem("nucleus_token");
     if (!token) {
       router.push("/login");
+      return;
     }
-  }, [router]);
-
-  let user: User | null = null;
-  if (typeof window !== "undefined") {
     const stored = localStorage.getItem("nucleus_user");
     if (stored) {
       try {
-        user = JSON.parse(stored);
+        setUser(JSON.parse(stored));
       } catch {
         // ignore
       }
     }
-  }
+    setMounted(true);
+  }, [router]);
 
   return (
     <div className="min-h-screen bg-background">
       <SideNav />
       <div className="ml-20">
         <TopBar
-          userName={user?.display_name || "Console"}
+          userName={mounted ? user?.display_name : undefined}
           tenantName="Global Operations"
         />
         <main className="min-h-[calc(100vh-56px)]">{children}</main>

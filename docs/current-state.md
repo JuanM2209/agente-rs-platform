@@ -1,0 +1,148 @@
+# Nucleus Remote Access Portal: Current State
+
+Last updated: 2026-03-20
+
+## Purpose
+
+The project provides a search-first remote access portal for Nucleus Linux devices. A user looks up a `Device ID`, inspects discovered endpoints, and starts either:
+
+- a browser session for web ports such as `80`, `443`, `1880`, `9090`
+- a local exported TCP mapping for program ports such as `502`
+- a temporary serial bridge flow for MBUSD-backed Modbus RTU to TCP
+
+## Current Runtime Modes
+
+There are currently two runtime modes in the repository:
+
+1. `Portal preview / mock mode`
+   - Implemented in `apps/web/src/app/api/v1/*`
+   - Used by the current preview deployment when `NEXT_PUBLIC_API_URL` is not set
+   - Good for UI work and controlled demos
+
+2. `Real backend mode`
+   - Implemented in `apps/api`
+   - Intended to be used when the portal points to the Go API
+   - Not every frontend contract was originally aligned with the Go API; this repo now includes compatibility work, but future engineers should still treat mock and real backend parity as an active concern
+
+## Current Preview
+
+- Current Cloudflare preview URL: `https://condo-fabrics-provision-jose.trycloudflare.com/dashboard`
+- Treat this as a preview/dev endpoint only
+- Do not hardcode `trycloudflare.com` URLs into product logic or permanent documentation
+
+## Temporary Product Assumptions
+
+These assumptions are intentional and should be preserved until the product owner provides the real ORG/device mapping:
+
+- Use the existing credentials as-is for now
+- Multi-ORG provisioning is deferred
+- Test devices remain the working dataset
+- Future ORG/device entitlements will be added later without changing the current login flow yet
+
+## Monorepo Layout
+
+- `apps/web`
+  - Next.js portal UI
+  - Also contains mock API routes for preview mode
+- `apps/api`
+  - Go control-plane HTTP API
+  - Handles auth, devices, sessions, bridges, audit history
+- `apps/agent`
+  - Go edge agent that runs on the Nucleus device
+  - Manages inventory scanning, sessions, and MBUSD process lifecycle
+- `tools/windows-helper`
+  - Go CLI that maps exported sessions to `127.0.0.1:<port>` on the engineer laptop
+- `infra/migrations`
+  - PostgreSQL schema and helper functions
+- `infra/seeds`
+  - Development seed data
+
+## Device Identity Resolution
+
+The agent now resolves the device identifier using this order:
+
+1. `DEVICE_ID` environment variable
+2. `/data/nucleus/factory/nucleus_serial_number`
+
+This matches the current operational assumption that every Nucleus device has a file named `nucleus_serial_number` under `/data/nucleus/factory/`.
+
+### Notes
+
+- The file is read at agent startup
+- The path can be overridden with `NUCLEUS_SERIAL_NUMBER_FILE`
+- The goal is to let the container auto-identify the Nucleus without forcing manual configuration per device
+
+## Export Session Telemetry
+
+This iteration introduces first-pass telemetry for exported TCP sessions.
+
+### Telemetry fields
+
+- `connection_status`
+  - `pending`
+  - `reachable`
+  - `degraded`
+  - `unreachable`
+  - `stopped`
+- `latency_ms`
+- `last_checked_at`
+- `last_error`
+- `probe_source`
+
+### Source of truth
+
+- The Windows helper performs a periodic TCP probe to the exported remote endpoint
+- Probe results are sent back to the API using `POST /api/v1/sessions/{sessionId}/telemetry`
+- The portal surfaces this data in the active sessions UI
+- Mock routes in `apps/web` also support the same telemetry shape so preview mode remains functional
+
+### Important limitation
+
+The current telemetry is transport-level TCP latency, not protocol-level application latency. For example, Modbus or PLC response times can still differ from the measured `latency_ms`.
+
+## Export Session Flow
+
+### Current intended flow
+
+1. User logs into the portal
+2. User searches by `Device ID`
+3. User starts an export session for a program port
+4. Portal creates a session record
+5. Windows helper maps the remote endpoint to a local laptop port
+6. Helper periodically reports connection status and latency
+7. When the helper closes the mapping, it also requests remote session stop
+
+### History behavior
+
+- The Go API now writes a minimal `export_history` row when a session is explicitly stopped
+- Session telemetry is copied into history metadata when available
+
+## Documentation of the Current UI State
+
+The current UI direction includes:
+
+- dark operations-console style
+- device-centric search
+- session monitoring page
+- audit/history page
+- serial bridge modal
+
+The UI preview may still be backed by mock data even when the backend implementation exists in Go.
+
+## Known Gaps
+
+These are still open after this iteration:
+
+- Agent identity/authentication is still not production-grade
+- Full multi-ORG entitlements are not implemented yet
+- Real backend and mock backend still need more contract convergence in some areas
+- Inventory still needs a more scalable cached/on-demand strategy
+- The helper is still a CLI MVP, not a persistent Windows tray app
+- Go services could not be compiled in this workstation snapshot because Go is not installed locally here
+
+## Next Engineer Checklist
+
+- Verify the agent container can read `/data/nucleus/factory/nucleus_serial_number` in the real deployment mount setup
+- Validate the helper telemetry endpoint against the real Go API, not only preview mocks
+- Decide whether `remote_host` should remain the device IP fallback or come from richer endpoint inventory data
+- Keep documenting any change that affects session shape, auth flow, or export telemetry

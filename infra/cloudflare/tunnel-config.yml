@@ -5,35 +5,26 @@
 # Setup:
 # 1. Install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
 # 2. cloudflared login
-# 3. cloudflared tunnel create nucleus-portal
-# 4. Copy tunnel credentials to ~/.cloudflared/<tunnel-id>.json
-# 5. Update tunnel_id below
-# 6. cloudflared tunnel route dns nucleus-portal portal.yourdomain.com
-# 7. cloudflared tunnel run nucleus-portal
+# 3. Route DNS:
+#    cloudflared tunnel route dns api-dbv portal.datadesng.com
+#    cloudflared tunnel route dns api-dbv api.datadesng.com
+# 4. Run:
+#    cloudflared tunnel --config infra/cloudflare/tunnel-config.yml run api-dbv
 # ============================================================
 
-tunnel: <TUNNEL_ID>
-credentials-file: /home/nucleus/.cloudflared/<TUNNEL_ID>.json
+tunnel: api-dbv
 
 # Ingress rules — route public domains to local services
 ingress:
   # Web portal
-  - hostname: portal.yourdomain.com
+  - hostname: portal.datadesng.com
     service: http://localhost:3000
     originRequest:
       noTLSVerify: false
       connectTimeout: 30s
 
   # API (for web app and direct API access)
-  - hostname: api.yourdomain.com
-    service: http://localhost:8080
-    originRequest:
-      noTLSVerify: false
-      connectTimeout: 30s
-      httpHostHeader: api.yourdomain.com
-
-  # WebSocket agent connections (must allow WS upgrade)
-  - hostname: agents.yourdomain.com
+  - hostname: api.datadesng.com
     service: http://localhost:8080
     originRequest:
       noTLSVerify: false

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -13,6 +14,8 @@ import (
 // Config holds all agent configuration loaded from environment variables.
 type Config struct {
 	DeviceID              string
+	DeviceIDSource        string
+	DeviceIDFile          string
 	ControlPlaneURL       string
 	AgentSecret           string
 	TenantID              string
@@ -36,9 +39,17 @@ func Load(envFile string) (*Config, error) {
 
 	var errs []string
 
-	cfg.DeviceID = os.Getenv("DEVICE_ID")
-	if cfg.DeviceID == "" {
-		errs = append(errs, "DEVICE_ID is required")
+	cfg.DeviceIDFile = os.Getenv("NUCLEUS_SERIAL_NUMBER_FILE")
+	if cfg.DeviceIDFile == "" {
+		cfg.DeviceIDFile = "/data/nucleus/factory/nucleus_serial_number"
+	}
+
+	deviceID, source, err := resolveDeviceID(os.Getenv("DEVICE_ID"), cfg.DeviceIDFile)
+	if err != nil {
+		errs = append(errs, err.Error())
+	} else {
+		cfg.DeviceID = deviceID
+		cfg.DeviceIDSource = source
 	}
 
 	cfg.ControlPlaneURL = os.Getenv("CONTROL_PLANE_URL")
@@ -71,6 +82,28 @@ func Load(envFile string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func resolveDeviceID(envValue, filePath string) (string, string, error) {
+	deviceID := strings.TrimSpace(envValue)
+	if deviceID != "" {
+		return deviceID, "env", nil
+	}
+
+	raw, err := os.ReadFile(filePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", "", fmt.Errorf("DEVICE_ID is required or %s must exist", filePath)
+		}
+		return "", "", fmt.Errorf("reading device ID from %s failed: %w", filePath, err)
+	}
+
+	deviceID = strings.TrimSpace(string(raw))
+	if deviceID == "" {
+		return "", "", fmt.Errorf("device ID file %s is empty", filePath)
+	}
+
+	return deviceID, "file", nil
 }
 
 func parseDuration(key string, defaultVal time.Duration) time.Duration {

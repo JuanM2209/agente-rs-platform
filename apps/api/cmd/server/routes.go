@@ -27,8 +27,12 @@ func buildRouter(cfg *config.Config, hub *ws.AgentHub) http.Handler {
 	r.Use(appMiddleware.Logger)
 
 	// CORS — tighten origins per environment in production.
+	allowedOrigins := cfg.APICORSOrigins
+	if len(allowedOrigins) == 0 {
+		allowedOrigins = []string{"http://localhost:3000", "http://localhost:3001"}
+	}
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"https://*", "http://*"},
+		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"},
 		ExposedHeaders:   []string{"X-Request-ID"},
@@ -88,6 +92,7 @@ func buildRouter(cfg *config.Config, hub *ws.AgentHub) http.Handler {
 
 			// Session management.
 			r.Delete("/sessions/{sessionId}", sessionHandler.StopSession)
+			r.Post("/sessions/{sessionId}/telemetry", sessionHandler.UpdateSessionTelemetry)
 
 			// Bridge management.
 			r.Delete("/bridges/{bridgeId}", bridgeHandler.StopBridge)

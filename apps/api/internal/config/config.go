@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Config holds all application configuration loaded from environment variables.
@@ -16,6 +17,7 @@ type Config struct {
 	Environment            string
 	CloudflareTunnelToken  string
 	AgentWSSecret          string
+	APICORSOrigins         []string
 }
 
 // Load reads configuration from environment variables and returns a populated Config.
@@ -59,6 +61,7 @@ func Load() (*Config, error) {
 
 	// Optional
 	cfg.CloudflareTunnelToken = os.Getenv("CLOUDFLARE_TUNNEL_TOKEN")
+	cfg.APICORSOrigins = splitCSV(os.Getenv("API_CORS_ORIGINS"))
 
 	return cfg, nil
 }
@@ -73,4 +76,20 @@ func getEnvInt(key string, defaultVal int) int {
 		return defaultVal
 	}
 	return parsed
+}
+
+func splitCSV(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }

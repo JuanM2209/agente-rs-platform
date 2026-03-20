@@ -55,7 +55,7 @@ func printMappingsTable(mappings []internal.Mapping) {
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetHeader([]string{
 		"Session ID", "Local Port", "Remote Host", "Remote Port",
-		"Bytes Fwd", "Started", "TTL", "Status",
+		"Bytes Fwd", "Started", "TTL", "Status", "Latency", "Last Check",
 	})
 	table.SetAutoWrapText(false)
 	table.SetBorder(true)
@@ -84,6 +84,8 @@ func printMappingsTable(mappings []internal.Mapping) {
 			started,
 			ttlStr,
 			status,
+			formatLatency(m.LatencyMS),
+			formatLastCheck(m.LastCheckedAt),
 		})
 	}
 
@@ -102,4 +104,18 @@ func formatBytes(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+func formatLatency(latencyMS int) string {
+	if latencyMS <= 0 {
+		return "pending"
+	}
+	return fmt.Sprintf("%d ms", latencyMS)
+}
+
+func formatLastCheck(ts time.Time) string {
+	if ts.IsZero() {
+		return "pending"
+	}
+	return ts.Local().Format("15:04:05")
 }

@@ -40,6 +40,7 @@ func run() error {
 	logger := buildLogger(cfg.LogLevel)
 	logger.Info().
 		Str("device_id", cfg.DeviceID).
+		Str("device_id_source", cfg.DeviceIDSource).
 		Str("tenant_id", cfg.TenantID).
 		Str("control_plane_url", cfg.ControlPlaneURL).
 		Msg("nucleus agent starting")

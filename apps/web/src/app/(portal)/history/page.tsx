@@ -19,6 +19,14 @@ const deliveryModeIcon: Record<string, string> = {
   export: "output",
 };
 
+const telemetryLabel: Record<string, string> = {
+  pending: "Pending",
+  reachable: "Reachable",
+  degraded: "Degraded",
+  unreachable: "Unreachable",
+  stopped: "Stopped",
+};
+
 export default function HistoryPage() {
   const [history, setHistory] = useState<ExportHistory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,6 +114,8 @@ export default function HistoryPage() {
               const durationMin = record.duration_seconds
                 ? Math.round(record.duration_seconds / 60)
                 : null;
+              const telemetry = record.telemetry
+                || (record.metadata?.telemetry as ExportHistory["telemetry"] | undefined);
 
               return (
                 <div
@@ -165,6 +175,12 @@ export default function HistoryPage() {
 
                   <div className="font-technical text-on-surface-variant">
                     {durationMin != null ? `${durationMin}m` : "—"}
+                    {record.delivery_mode === "export" && telemetry && (
+                      <p className="text-xs text-outline mt-1">
+                        {telemetryLabel[telemetry.connection_status || "pending"] || "Pending"}
+                        {typeof telemetry.latency_ms === "number" ? ` • ${telemetry.latency_ms} ms` : ""}
+                      </p>
+                    )}
                   </div>
 
                   <div>

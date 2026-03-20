@@ -16,7 +16,9 @@ import type {
   User,
 } from "@/types";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+// Empty string → relative URL → hits Next.js mock routes bundled with the frontend.
+// Set NEXT_PUBLIC_API_URL=http://localhost:8080 to use the real Go backend.
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 class APIError extends Error {
   constructor(
@@ -28,6 +30,12 @@ class APIError extends Error {
     this.name = "APIError";
   }
 }
+
+type LoginEnvelope = LoginResponse & {
+  access_token?: string;
+  refresh_token?: string;
+  expires_in?: number;
+};
 
 function getAuthToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -70,11 +78,20 @@ export async function login(req: LoginRequest): Promise<LoginResponse> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
   });
-  const data: APIResponse<LoginResponse> = await res.json();
+  const data: APIResponse<LoginEnvelope> = await res.json();
   if (!res.ok || !data.success) {
     throw new APIError(data.error || "Login failed", res.status);
   }
-  return data.data!;
+  const payload = data.data!;
+  const expiresAt = payload.expires_at
+    ?? new Date(Date.now() + (payload.expires_in ?? 3600) * 1000).toISOString();
+
+  return {
+    token: payload.token || payload.access_token || "",
+    refresh_token: payload.refresh_token || "",
+    user: payload.user,
+    expires_at: expiresAt,
+  };
 }
 
 export async function logout(): Promise<void> {

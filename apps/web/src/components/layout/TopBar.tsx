@@ -9,7 +9,7 @@ interface TopBarProps {
   tenantName?: string;
 }
 
-export function TopBar({ userName = "Admin Console", tenantName = "Global Operations" }: TopBarProps) {
+export function TopBar({ userName, tenantName = "Global Operations" }: TopBarProps) {
   const router = useRouter();
 
   const handleLogout = async () => {
@@ -60,7 +60,7 @@ export function TopBar({ userName = "Admin Console", tenantName = "Global Operat
               person
             </span>
           </div>
-          <span className="text-sm font-medium text-on-surface">{userName}</span>
+          <span className="text-sm font-medium text-on-surface" suppressHydrationWarning>{userName}</span>
         </button>
       </div>
     </header>

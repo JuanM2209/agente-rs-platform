@@ -1,21 +1,49 @@
 package internal
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 )
 
+type apiEnvelope struct {
+	Success bool            `json:"success"`
+	Data    json.RawMessage `json:"data"`
+	Error   string          `json:"error"`
+}
+
+type SessionTelemetry struct {
+	ConnectionStatus string     `json:"connection_status"`
+	LatencyMS        *int       `json:"latency_ms,omitempty"`
+	LastCheckedAt    *time.Time `json:"last_checked_at,omitempty"`
+	LastError        string     `json:"last_error,omitempty"`
+	ProbeSource      string     `json:"probe_source,omitempty"`
+}
+
+type SessionDevice struct {
+	DeviceID    string `json:"device_id"`
+	DisplayName string `json:"display_name"`
+}
+
+type SessionEndpoint struct {
+	Label string `json:"label"`
+	Port  int    `json:"port"`
+}
+
 // Session represents an active Nucleus session returned by the API.
 type Session struct {
-	ID         string    `json:"id"`
-	DeviceID   string    `json:"device_id"`
-	DeviceName string    `json:"device_name"`
-	RemoteHost string    `json:"remote_host"`
-	RemotePort int       `json:"remote_port"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	Status     string    `json:"status"`
+	ID         string            `json:"id"`
+	DeviceID   string            `json:"device_id"`
+	DeviceName string            `json:"device_name"`
+	RemoteHost string            `json:"remote_host"`
+	RemotePort int               `json:"remote_port"`
+	ExpiresAt  time.Time         `json:"expires_at"`
+	Status     string            `json:"status"`
+	Telemetry  *SessionTelemetry `json:"telemetry,omitempty"`
+	Device     *SessionDevice    `json:"device,omitempty"`
+	Endpoint   *SessionEndpoint  `json:"endpoint,omitempty"`
 }
 
 // Device represents a Nucleus-managed device.
@@ -34,7 +62,7 @@ type APIClient struct {
 }
 
 // NewAPIClient constructs an APIClient using the token and API URL stored in
-// the local config.  Call LoadToken() before this if you need to obtain them.
+// the local config. Call LoadToken() before this if you need to obtain them.
 func NewAPIClient(baseURL, token string) *APIClient {
 	return &APIClient{
 		baseURL: baseURL,
@@ -55,8 +83,8 @@ func NewAPIClientFromConfig() (*APIClient, error) {
 	return NewAPIClient(apiURL, token), nil
 }
 
-// get executes an authenticated GET request and decodes the JSON response body
-// into dest.
+// get executes an authenticated GET request and decodes the standard API
+// envelope payload into dest.
 func (c *APIClient) get(path string, dest interface{}) error {
 	url := c.baseURL + path
 	req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -73,14 +101,76 @@ func (c *APIClient) get(path string, dest interface{}) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("unauthorized — run 'nucleus-helper login' to refresh your token")
+		return fmt.Errorf("unauthorized - run 'nucleus-helper login' to refresh your token")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("GET %q returned HTTP %d", url, resp.StatusCode)
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
+	var envelope apiEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
 		return fmt.Errorf("decoding response from %q: %w", url, err)
+	}
+	if !envelope.Success {
+		if envelope.Error == "" {
+			envelope.Error = "request failed"
+		}
+		return fmt.Errorf("%s", envelope.Error)
+	}
+	if dest == nil || len(envelope.Data) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(envelope.Data, dest); err != nil {
+		return fmt.Errorf("decoding response payload from %q: %w", url, err)
+	}
+	return nil
+}
+
+// post executes an authenticated POST request and decodes the standard API
+// envelope payload into dest when provided.
+func (c *APIClient) post(path string, payload interface{}, dest interface{}) error {
+	url := c.baseURL + path
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("encoding POST payload for %q: %w", url, err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("building POST request for %q: %w", url, err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("POST %q: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("unauthorized - run 'nucleus-helper login' to refresh your token")
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("POST %q returned HTTP %d", url, resp.StatusCode)
+	}
+
+	var envelope apiEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return fmt.Errorf("decoding response from %q: %w", url, err)
+	}
+	if !envelope.Success {
+		if envelope.Error == "" {
+			envelope.Error = "request failed"
+		}
+		return fmt.Errorf("%s", envelope.Error)
+	}
+	if dest == nil || len(envelope.Data) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(envelope.Data, dest); err != nil {
+		return fmt.Errorf("decoding response payload from %q: %w", url, err)
 	}
 	return nil
 }
@@ -101,7 +191,7 @@ func (c *APIClient) delete(path string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("unauthorized — run 'nucleus-helper login' to refresh your token")
+		return fmt.Errorf("unauthorized - run 'nucleus-helper login' to refresh your token")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("DELETE %q returned HTTP %d", url, resp.StatusCode)
@@ -116,7 +206,32 @@ func (c *APIClient) GetActiveSessions() ([]Session, error) {
 	if err := c.get("/api/v1/me/active-sessions", &sessions); err != nil {
 		return nil, fmt.Errorf("fetching active sessions: %w", err)
 	}
+
+	for i := range sessions {
+		if sessions[i].DeviceName == "" && sessions[i].Device != nil {
+			if sessions[i].Device.DisplayName != "" {
+				sessions[i].DeviceName = sessions[i].Device.DisplayName
+			} else {
+				sessions[i].DeviceName = sessions[i].Device.DeviceID
+			}
+		}
+		if sessions[i].RemotePort == 0 && sessions[i].Endpoint != nil {
+			sessions[i].RemotePort = sessions[i].Endpoint.Port
+		}
+	}
+
 	return sessions, nil
+}
+
+// UpdateSessionTelemetry pushes helper-side probe telemetry back to the API.
+func (c *APIClient) UpdateSessionTelemetry(id string, telemetry SessionTelemetry) error {
+	if id == "" {
+		return fmt.Errorf("session ID must not be empty")
+	}
+	if err := c.post("/api/v1/sessions/"+id+"/telemetry", telemetry, nil); err != nil {
+		return fmt.Errorf("updating telemetry for session %q: %w", id, err)
+	}
+	return nil
 }
 
 // StopSession terminates the session with the given ID on the server.

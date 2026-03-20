@@ -8,6 +8,7 @@ export type EndpointType = "WEB" | "PROGRAM" | "BRIDGE";
 export type SessionStatus = "active" | "expired" | "stopped" | "error";
 export type DeliveryMode = "web" | "export";
 export type StopReason = "user_stopped" | "ttl_expired" | "idle_timeout" | "error" | "agent_disconnect";
+export type SessionConnectionStatus = "pending" | "reachable" | "degraded" | "unreachable" | "stopped";
 
 export interface Tenant {
   id: string;
@@ -62,6 +63,14 @@ export interface Endpoint {
   discovered_at?: string;
 }
 
+export interface SessionTelemetry {
+  connection_status: SessionConnectionStatus;
+  latency_ms?: number;
+  last_checked_at?: string;
+  last_error?: string;
+  probe_source?: "helper" | "agent" | "system";
+}
+
 export interface DeviceInventory {
   device: Device;
   endpoints: {
@@ -91,12 +100,14 @@ export interface Session {
   delivery_mode: DeliveryMode;
   ttl_seconds: number;
   idle_timeout_seconds?: number;
+  remote_host?: string;
   started_at: string;
   expires_at: string;
   last_activity_at?: string;
   stopped_at?: string;
   stop_reason?: StopReason;
   tunnel_url?: string;
+  telemetry?: SessionTelemetry;
   device?: Device;
   endpoint?: Endpoint;
   user?: User;
@@ -118,6 +129,7 @@ export interface ExportHistory {
   duration_seconds?: number;
   bytes_transferred?: number;
   metadata?: Record<string, unknown>;
+  telemetry?: SessionTelemetry;
   device?: Device;
   endpoint?: Endpoint;
   user?: User;

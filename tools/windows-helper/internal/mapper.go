@@ -12,36 +12,38 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+const (
+	probeInterval      = 10 * time.Second
+	probeTimeout       = 3 * time.Second
+	degradedThreshold  = 250 * time.Millisecond
+)
+
 // Mapping represents a single active TCP port-forward from a local port to a
 // remote Nucleus session endpoint.
-//
-// The unexported fields (listener, cancel) are intentionally excluded from any
-// serialisation so that a future GUI can safely copy the public fields for
-// display without touching the networking state.
 type Mapping struct {
-	SessionID  string    `json:"session_id"`
-	LocalPort  int       `json:"local_port"`
-	RemoteHost string    `json:"remote_host"`
-	RemotePort int       `json:"remote_port"`
-	StartedAt  time.Time `json:"started_at"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	BytesFwd   int64     `json:"bytes_forwarded"`
+	SessionID        string    `json:"session_id"`
+	LocalPort        int       `json:"local_port"`
+	RemoteHost       string    `json:"remote_host"`
+	RemotePort       int       `json:"remote_port"`
+	StartedAt        time.Time `json:"started_at"`
+	ExpiresAt        time.Time `json:"expires_at"`
+	BytesFwd         int64     `json:"bytes_forwarded"`
+	ConnectionStatus string    `json:"connection_status"`
+	LatencyMS        int       `json:"latency_ms"`
+	LastCheckedAt    time.Time `json:"last_checked_at"`
+	LastError        string    `json:"last_error,omitempty"`
 
 	listener net.Listener
 	cancel   context.CancelFunc
 }
 
-// TTL returns how long until the mapping expires.  A negative duration means
+// TTL returns how long until the mapping expires. A negative duration means
 // the session has already expired.
 func (m *Mapping) TTL() time.Duration {
 	return time.Until(m.ExpiresAt)
 }
 
 // Mapper manages the full set of active TCP port mappings.
-// It is safe for concurrent use.
-//
-// Design note: Mapper is intentionally free of any GUI or Cobra dependencies
-// so that it can be embedded directly in a future Windows systray application.
 type Mapper struct {
 	mappings map[string]*Mapping
 	mu       sync.RWMutex
@@ -56,9 +58,6 @@ func NewMapper() *Mapper {
 
 // StartMapping binds 127.0.0.1:<localPort> and begins forwarding every
 // accepted connection to remoteHost:remotePort.
-//
-// The mapping is automatically stopped when the session TTL reaches zero.
-// Calling StartMapping for an already-active sessionID returns an error.
 func (m *Mapper) StartMapping(
 	sessionID string,
 	localPort int,
@@ -82,14 +81,15 @@ func (m *Mapper) StartMapping(
 	ctx, cancel := context.WithDeadline(context.Background(), expiresAt)
 
 	mapping := &Mapping{
-		SessionID:  sessionID,
-		LocalPort:  localPort,
-		RemoteHost: remoteHost,
-		RemotePort: remotePort,
-		StartedAt:  time.Now(),
-		ExpiresAt:  expiresAt,
-		listener:   listener,
-		cancel:     cancel,
+		SessionID:        sessionID,
+		LocalPort:        localPort,
+		RemoteHost:       remoteHost,
+		RemotePort:       remotePort,
+		StartedAt:        time.Now(),
+		ExpiresAt:        expiresAt,
+		ConnectionStatus: "pending",
+		listener:         listener,
+		cancel:           cancel,
 	}
 
 	m.mappings[sessionID] = mapping
@@ -97,6 +97,7 @@ func (m *Mapper) StartMapping(
 	remoteAddr := fmt.Sprintf("%s:%d", remoteHost, remotePort)
 	go m.acceptLoop(ctx, mapping, remoteAddr)
 	go m.watchExpiry(ctx, sessionID)
+	go m.probeLoop(ctx, sessionID, remoteAddr)
 
 	log.Info().
 		Str("session_id", sessionID).
@@ -109,7 +110,7 @@ func (m *Mapper) StartMapping(
 }
 
 // StopMapping cancels the named mapping, closes the listener, and removes it
-// from the internal registry.  Stopping an unknown sessionID is a no-op.
+// from the internal registry. Stopping an unknown sessionID is a no-op.
 func (m *Mapper) StopMapping(sessionID string) error {
 	m.mu.Lock()
 	mapping, exists := m.mappings[sessionID]
@@ -128,12 +129,14 @@ func (m *Mapper) StopMapping(sessionID string) error {
 	log.Info().
 		Str("session_id", sessionID).
 		Int64("bytes_forwarded", atomic.LoadInt64(&mapping.BytesFwd)).
+		Str("connection_status", mapping.ConnectionStatus).
+		Int("latency_ms", mapping.LatencyMS).
 		Msg("TCP mapping stopped")
 
 	return nil
 }
 
-// StopAll stops every active mapping.  Used during graceful shutdown.
+// StopAll stops every active mapping. Used during graceful shutdown.
 func (m *Mapper) StopAll() {
 	m.mu.RLock()
 	ids := make([]string, 0, len(m.mappings))
@@ -149,8 +152,24 @@ func (m *Mapper) StopAll() {
 	}
 }
 
+// GetMapping returns a snapshot for a single mapping.
+func (m *Mapper) GetMapping(sessionID string) (Mapping, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	mapping, ok := m.mappings[sessionID]
+	if !ok {
+		return Mapping{}, false
+	}
+
+	snap := *mapping
+	snap.listener = nil
+	snap.cancel = nil
+	snap.BytesFwd = atomic.LoadInt64(&mapping.BytesFwd)
+	return snap, true
+}
+
 // ListMappings returns a snapshot of all active mappings.
-// Callers receive value copies; they cannot modify internal state.
 func (m *Mapper) ListMappings() []Mapping {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -166,43 +185,43 @@ func (m *Mapper) ListMappings() []Mapping {
 	return result
 }
 
-// acceptLoop accepts inbound connections and spawns a forwardTCP goroutine for
-// each one.  It exits when the context is done or the listener is closed.
 func (m *Mapper) acceptLoop(ctx context.Context, mapping *Mapping, remoteAddr string) {
 	for {
 		conn, err := mapping.listener.Accept()
 		if err != nil {
 			select {
 			case <-ctx.Done():
-				// Expected — context expired or mapping was stopped.
 			default:
 				log.Error().Err(err).Str("session_id", mapping.SessionID).Msg("accept error")
 			}
 			return
 		}
-		go m.forwardTCP(ctx, conn, remoteAddr, &mapping.BytesFwd)
+		go m.forwardTCP(ctx, mapping.SessionID, conn, remoteAddr, &mapping.BytesFwd)
 	}
 }
 
-// forwardTCP proxies data bidirectionally between the inbound local connection
-// and a freshly-dialled remote connection.  Both connections are closed when
-// either side finishes or the context is cancelled.
-func (m *Mapper) forwardTCP(ctx context.Context, local net.Conn, remoteAddr string, counter *int64) {
+func (m *Mapper) forwardTCP(
+	ctx context.Context,
+	sessionID string,
+	local net.Conn,
+	remoteAddr string,
+	counter *int64,
+) {
 	defer local.Close()
 
 	var dialer net.Dialer
 	remote, err := dialer.DialContext(ctx, "tcp", remoteAddr)
 	if err != nil {
+		m.updateProbeState(sessionID, "unreachable", 0, time.Now(), err.Error())
 		log.Warn().Err(err).Str("remote", remoteAddr).Msg("dial remote failed")
 		return
 	}
 	defer remote.Close()
 
-	// Close both sides when the session context expires.
 	go func() {
 		<-ctx.Done()
-		local.Close()
-		remote.Close()
+		_ = local.Close()
+		_ = remote.Close()
 	}()
 
 	var wg sync.WaitGroup
@@ -217,8 +236,7 @@ func (m *Mapper) forwardTCP(ctx context.Context, local net.Conn, remoteAddr stri
 		if counter != nil {
 			atomic.AddInt64(counter, n)
 		}
-		// Half-close signals EOF to the other direction.
-		dst.Close()
+		_ = dst.Close()
 	}
 
 	go pipe(remote, local)
@@ -227,8 +245,6 @@ func (m *Mapper) forwardTCP(ctx context.Context, local net.Conn, remoteAddr stri
 	wg.Wait()
 }
 
-// watchExpiry blocks until the context deadline is reached and then stops the
-// mapping.  This is the mechanism that enforces session TTL.
 func (m *Mapper) watchExpiry(ctx context.Context, sessionID string) {
 	<-ctx.Done()
 
@@ -237,12 +253,67 @@ func (m *Mapper) watchExpiry(ctx context.Context, sessionID string) {
 	m.mu.RUnlock()
 
 	if !stillActive {
-		// Already stopped by StopMapping — nothing to do.
 		return
 	}
 
-	log.Info().Str("session_id", sessionID).Msg("session TTL expired — removing mapping")
+	log.Info().Str("session_id", sessionID).Msg("session TTL expired - removing mapping")
 	if err := m.StopMapping(sessionID); err != nil {
 		log.Warn().Err(err).Str("session_id", sessionID).Msg("expiry cleanup error")
 	}
+}
+
+func (m *Mapper) probeLoop(ctx context.Context, sessionID, remoteAddr string) {
+	m.runProbe(sessionID, remoteAddr)
+
+	ticker := time.NewTicker(probeInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.runProbe(sessionID, remoteAddr)
+		}
+	}
+}
+
+func (m *Mapper) runProbe(sessionID, remoteAddr string) {
+	started := time.Now()
+	conn, err := net.DialTimeout("tcp", remoteAddr, probeTimeout)
+	checkedAt := time.Now()
+	if err != nil {
+		m.updateProbeState(sessionID, "unreachable", 0, checkedAt, err.Error())
+		return
+	}
+	_ = conn.Close()
+
+	latency := time.Since(started)
+	status := "reachable"
+	if latency > degradedThreshold {
+		status = "degraded"
+	}
+
+	m.updateProbeState(sessionID, status, int(latency.Milliseconds()), checkedAt, "")
+}
+
+func (m *Mapper) updateProbeState(
+	sessionID string,
+	status string,
+	latencyMS int,
+	checkedAt time.Time,
+	lastError string,
+) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	mapping, ok := m.mappings[sessionID]
+	if !ok {
+		return
+	}
+
+	mapping.ConnectionStatus = status
+	mapping.LatencyMS = latencyMS
+	mapping.LastCheckedAt = checkedAt
+	mapping.LastError = lastError
 }
