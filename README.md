@@ -24,7 +24,13 @@ Each Nucleus device may expose:
 
 All access is **on-demand**, **audited**, and **tenant-scoped**.
 
-Current preview deployment is running behind Cloudflare preview infrastructure. Treat preview URLs as temporary.
+Current public test deployment is running on:
+
+- Portal: `https://portal.datadesng.com/login`
+- API health: `https://api.datadesng.com/health`
+- Public repo: `https://github.com/JuanM2209/agente-rs-platform`
+
+This deployment is intended for external testing on Windows host infrastructure and test devices. It is not yet the final multi-ORG production shape.
 
 ---
 
@@ -85,8 +91,8 @@ nucleus-remote-access-portal/
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/your-org/nucleus-remote-access-portal.git
-cd nucleus-remote-access-portal
+git clone https://github.com/JuanM2209/agente-rs-platform.git
+cd agente-rs-platform
 
 cp .env.example .env
 # Edit .env — change JWT_SECRET to a strong random value
@@ -259,7 +265,7 @@ nucleus-helper.exe unmap --session-id <id>
 See `infra/cloudflare/README.md` for full setup.
 
 **Summary:**
-1. Reuse named tunnel `api-dbv`
+1. Use the dedicated named tunnel `agente-rs-public`
 2. Route DNS: `portal.datadesng.com -> localhost:3000`, `api.datadesng.com -> localhost:8080`
 3. Agents connect to: `wss://api.datadesng.com/ws/agent`
 4. Optionally add Zero Trust Access policy for the portal

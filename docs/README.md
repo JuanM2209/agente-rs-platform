@@ -14,6 +14,7 @@ This folder is the living technical documentation for the Nucleus Remote Access 
 - `agent-deployment.md`
   - Public preview via Cloudflare quick tunnel
   - External Nucleus Docker install steps
+  - Public GHCR install flow for `agente-rs`
   - Serial device mounting notes
   - Verification and troubleshooting commands
 - `public-deploy-runbook.md`
@@ -21,6 +22,7 @@ This folder is the living technical documentation for the Nucleus Remote Access 
   - Cloudflare named tunnel routing
   - Windows host startup steps
   - External `agente-rs` install commands
+  - Current public hostnames and tunnel identity
 
 ## Working Agreement
 

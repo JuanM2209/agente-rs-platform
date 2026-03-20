@@ -105,7 +105,7 @@ migrate: ## Run database migrations
 
 seed: ## Run database seeds (test data)
 	@echo "Running seeds..."
-	@docker compose exec postgres bash /seeds/run_seeds.sh
+	@docker compose exec -e DATABASE_URL=postgresql://$${POSTGRES_USER:-nucleus}:$${POSTGRES_PASSWORD:-nucleus_dev}@localhost:5432/$${POSTGRES_DB:-nucleus_portal} postgres bash /seeds/run_seeds.sh
 	@echo "Seeds complete."
 
 db-reset: ## Drop and recreate database, run migrations + seeds
@@ -176,17 +176,17 @@ git-init: ## Initialize git repo and create first commit
 	git commit -m "feat: initial scaffold for Nucleus Remote Access Portal"
 	@echo ""
 	@echo "  Git initialized. To push to GitHub:"
-	@echo "  1. Create repo: gh repo create nucleus-remote-access-portal --private"
+	@echo "  1. Create repo: gh repo create agente-rs-platform --public"
 	@echo "  2. Push:        git remote add origin <url> && git push -u origin main"
 
 # ---- Cloudflare ---------------------------------------------
 
 cf-tunnel-create: ## Create a Cloudflare tunnel (requires cloudflared CLI)
-	cloudflared tunnel create nucleus-portal
+	cloudflared tunnel create agente-rs-public
 	@echo "Copy the tunnel ID and credentials to infra/cloudflare/"
 
 cf-tunnel-run: ## Run Cloudflare tunnel locally
-	cloudflared tunnel --config infra/cloudflare/tunnel-config.yml run
+	cloudflared tunnel --config infra/cloudflare/tunnel-config.yml run agente-rs-public
 
 # ---- Cleanup ------------------------------------------------
 

@@ -8,6 +8,15 @@ This guide explains how to:
 
 - expose the portal through a temporary public Cloudflare URL for visual testing
 - install the `Agente-RS` container on an external Linux device
+- pull the public agent image directly from GitHub Container Registry
+
+## Current Public Targets
+
+- Portal: `https://portal.datadesng.com/login`
+- API / control plane: `https://api.datadesng.com`
+- Agent WebSocket: `wss://api.datadesng.com/ws/agent`
+- Public repo: `https://github.com/JuanM2209/agente-rs-platform`
+- Public image: `ghcr.io/juanm2209/agente-rs:latest`
 
 ## Public Preview For Visual Testing
 
@@ -68,7 +77,60 @@ That file must be mounted into the container as read-only.
 - Add `--device` for each serial adapter you want MBUSD to use
 - If serial bridge support is needed, make sure `mbusd` is available inside the container PATH
 
-## Option A: Build On The External Device
+## Option A: Pull The Public Image Directly (Recommended)
+
+### One-command installer from the public repo
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JuanM2209/agente-rs-platform/main/scripts/install-agente-rs.sh -o install-agente-rs.sh
+chmod +x install-agente-rs.sh
+CONTROL_PLANE_URL='wss://api.datadesng.com/ws/agent' \
+AGENT_SECRET='YOUR_AGENT_SECRET' \
+TENANT_ID='test-org' \
+./install-agente-rs.sh
+```
+
+### Direct docker commands
+
+```bash
+docker pull ghcr.io/juanm2209/agente-rs:latest
+```
+
+Then start the agent:
+
+```bash
+docker run -d \
+  --name agente-rs \
+  --restart unless-stopped \
+  --network host \
+  -v /data/nucleus/factory:/data/nucleus/factory:ro \
+  -e CONTROL_PLANE_URL='wss://api.datadesng.com/ws/agent' \
+  -e AGENT_SECRET='YOUR_AGENT_SECRET' \
+  -e TENANT_ID='test-org' \
+  -e LOG_LEVEL='info' \
+  ghcr.io/juanm2209/agente-rs:latest
+```
+
+### If the device has a serial adapter
+
+Example with `/dev/ttyUSB0`:
+
+```bash
+docker run -d \
+  --name agente-rs \
+  --restart unless-stopped \
+  --network host \
+  --device /dev/ttyUSB0:/dev/ttyUSB0 \
+  -v /data/nucleus/factory:/data/nucleus/factory:ro \
+  -v /usr/local/bin/mbusd:/usr/local/bin/mbusd:ro \
+  -e CONTROL_PLANE_URL='wss://api.datadesng.com/ws/agent' \
+  -e AGENT_SECRET='YOUR_AGENT_SECRET' \
+  -e TENANT_ID='test-org' \
+  -e LOG_LEVEL='info' \
+  ghcr.io/juanm2209/agente-rs:latest
+```
+
+## Option B: Build On The External Device
 
 Copy the repository to the Nucleus device and run:
 
@@ -111,7 +173,7 @@ docker run -d \
   agente-rs:latest
 ```
 
-## Option B: Build Once, Then Load On The External Device
+## Option C: Build Once, Then Load On The External Device
 
 If you do not want to compile on each Nucleus:
 
@@ -162,10 +224,11 @@ The logs should show:
 ```bash
 docker stop agente-rs
 docker rm agente-rs
-docker image rm agente-rs:latest
+docker image rm agente-rs:latest || true
+docker image rm ghcr.io/juanm2209/agente-rs:latest || true
 ```
 
-Then rebuild or reload the new image and run the same `docker run` command again.
+Then pull or rebuild the new image and run the same `docker run` command again.
 
 ## Troubleshooting
 

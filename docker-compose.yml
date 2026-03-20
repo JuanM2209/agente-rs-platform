@@ -1,5 +1,3 @@
-version: '3.9'
-
 # ============================================================
 # Nucleus Remote Access Portal — Docker Compose
 # Local development environment with all services

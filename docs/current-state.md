@@ -24,11 +24,21 @@ There are currently two runtime modes in the repository:
    - Intended to be used when the portal points to the Go API
    - Not every frontend contract was originally aligned with the Go API; this repo now includes compatibility work, but future engineers should still treat mock and real backend parity as an active concern
 
-## Current Preview
+## Current Public Deployment
 
-- Current Cloudflare preview URL: `https://condo-fabrics-provision-jose.trycloudflare.com/dashboard`
-- Treat this as a preview/dev endpoint only
-- Do not hardcode `trycloudflare.com` URLs into product logic or permanent documentation
+The current externally reachable deployment is:
+
+- Portal: `https://portal.datadesng.com/login`
+- API: `https://api.datadesng.com`
+- GitHub repo: `https://github.com/JuanM2209/agente-rs-platform`
+- Runtime host: Windows + Docker Desktop
+- Cloudflare named tunnel: `agente-rs-public`
+- Cloudflare tunnel ID: `8825530a-d505-4d9e-bd15-bbc1b85c1f15`
+
+### Important note
+
+- The previous `trycloudflare.com` preview URLs are no longer the source of truth
+- Future engineers should treat `portal.datadesng.com` and `api.datadesng.com` as the active external test endpoints unless the runbook changes
 
 ## Temporary Product Assumptions
 
@@ -38,6 +48,15 @@ These assumptions are intentional and should be preserved until the product owne
 - Multi-ORG provisioning is deferred
 - Test devices remain the working dataset
 - Future ORG/device entitlements will be added later without changing the current login flow yet
+
+## Current Test Credentials
+
+For the current seeded/test deployment:
+
+- `admin@alpha.com`
+- `operator@alpha.com`
+- `viewer@alpha.com`
+- password: `DevPass123!`
 
 ## Monorepo Layout
 
@@ -138,7 +157,7 @@ These are still open after this iteration:
 - Real backend and mock backend still need more contract convergence in some areas
 - Inventory still needs a more scalable cached/on-demand strategy
 - The helper is still a CLI MVP, not a persistent Windows tray app
-- Go services could not be compiled in this workstation snapshot because Go is not installed locally here
+- GHCR publishing depends on the GitHub Actions deploy workflow remaining healthy
 
 ## Next Engineer Checklist
 

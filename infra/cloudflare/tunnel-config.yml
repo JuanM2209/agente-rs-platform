@@ -6,13 +6,13 @@
 # 1. Install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
 # 2. cloudflared login
 # 3. Route DNS:
-#    cloudflared tunnel route dns api-dbv portal.datadesng.com
-#    cloudflared tunnel route dns api-dbv api.datadesng.com
+#    cloudflared tunnel route dns agente-rs-public portal.datadesng.com
+#    cloudflared tunnel route dns agente-rs-public api.datadesng.com
 # 4. Run:
-#    cloudflared tunnel --config infra/cloudflare/tunnel-config.yml run api-dbv
+#    cloudflared tunnel --config infra/cloudflare/tunnel-config.yml run agente-rs-public
 # ============================================================
 
-tunnel: api-dbv
+tunnel: 8825530a-d505-4d9e-bd15-bbc1b85c1f15
 
 # Ingress rules — route public domains to local services
 ingress:

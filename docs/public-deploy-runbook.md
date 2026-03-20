@@ -18,7 +18,8 @@ This runbook documents the current public deployment plan for the project on:
 - API image name: `ghcr.io/juanm2209/nucleus-api:latest`
 - Portal hostname: `portal.datadesng.com`
 - API hostname: `api.datadesng.com`
-- Cloudflare tunnel: `api-dbv`
+- Cloudflare tunnel: `agente-rs-public`
+- Cloudflare tunnel ID: `8825530a-d505-4d9e-bd15-bbc1b85c1f15`
 - Host runtime: Windows + Docker Desktop + cloudflared
 
 ## Deployment Model
@@ -66,23 +67,29 @@ docker compose up -d --build
 ```powershell
 docker compose exec postgres psql -U nucleus -d nucleus_portal -f /migrations/001_initial_schema.sql
 docker compose exec postgres psql -U nucleus -d nucleus_portal -f /migrations/002_session_functions.sql
-docker compose exec postgres bash /seeds/run_seeds.sh
+docker compose exec -e DATABASE_URL=postgresql://nucleus:nucleus_dev@localhost:5432/nucleus_portal postgres bash /seeds/run_seeds.sh
 ```
 
 ### 4. Run Cloudflare named tunnel
 
-First create DNS routes:
+First create DNS routes for the dedicated project tunnel:
 
 ```powershell
-cloudflared tunnel route dns api-dbv portal.datadesng.com
-cloudflared tunnel route dns api-dbv api.datadesng.com
+cloudflared tunnel route dns agente-rs-public portal.datadesng.com
+cloudflared tunnel route dns agente-rs-public api.datadesng.com
 ```
 
 Then run the named tunnel with the repo config:
 
 ```powershell
-cloudflared tunnel token api-dbv
-cloudflared tunnel --config infra\cloudflare\tunnel-config.yml run api-dbv
+cloudflared tunnel --config infra\cloudflare\tunnel-config.yml run agente-rs-public
+```
+
+### 5. Health checks
+
+```powershell
+Invoke-WebRequest -UseBasicParsing https://portal.datadesng.com/login | Select-Object -ExpandProperty StatusCode
+Invoke-WebRequest -UseBasicParsing https://api.datadesng.com/health | Select-Object -ExpandProperty Content
 ```
 
 ## GitHub Publishing
@@ -96,6 +103,8 @@ cloudflared tunnel --config infra\cloudflare\tunnel-config.yml run api-dbv
 - The `deploy.yml` workflow publishes:
   - `ghcr.io/<owner>/nucleus-api`
   - `ghcr.io/<owner>/agente-rs`
+- The workflow normalizes the owner name to lowercase for valid GHCR tags
+- The workflow requires `packages: write` permission
 
 ### Notes
 
@@ -108,6 +117,17 @@ cloudflared tunnel --config infra\cloudflare\tunnel-config.yml run api-dbv
 
 ```bash
 docker pull ghcr.io/juanm2209/agente-rs:latest
+```
+
+### Or use the installer script from the public repo
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JuanM2209/agente-rs-platform/main/scripts/install-agente-rs.sh -o install-agente-rs.sh
+chmod +x install-agente-rs.sh
+CONTROL_PLANE_URL='wss://api.datadesng.com/ws/agent' \
+AGENT_SECRET='replace-with-real-agent-secret' \
+TENANT_ID='test-org' \
+./install-agente-rs.sh
 ```
 
 ### Run the agent
@@ -146,4 +166,5 @@ docker run -d \
 
 - This first public phase is still using test-org / seeded data
 - Cloudflare quick tunnels are only for visual preview, not the permanent deployment path
+- The dedicated tunnel `agente-rs-public` exists specifically to avoid interfering with unrelated routes on the older `api-dbv` tunnel
 - The external install flow should standardize on `agente-rs`

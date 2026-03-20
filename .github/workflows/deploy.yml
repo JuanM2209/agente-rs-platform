@@ -5,6 +5,10 @@ on:
     branches: [main, master]
     tags: ["v*"]
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   deploy-api:
     name: Deploy API
@@ -14,6 +18,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Normalize image owner
+        run: echo "IMAGE_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -31,8 +38,8 @@ jobs:
           context: apps/api
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/nucleus-api:latest
-            ghcr.io/${{ github.repository_owner }}/nucleus-api:${{ github.sha }}
+            ghcr.io/${{ env.IMAGE_OWNER }}/nucleus-api:latest
+            ghcr.io/${{ env.IMAGE_OWNER }}/nucleus-api:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -44,6 +51,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Normalize image owner
+        run: echo "IMAGE_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -62,7 +72,7 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm/v7,linux/arm64
           tags: |
-            ghcr.io/${{ github.repository_owner }}/agente-rs:latest
-            ghcr.io/${{ github.repository_owner }}/agente-rs:${{ github.sha }}
+            ghcr.io/${{ env.IMAGE_OWNER }}/agente-rs:latest
+            ghcr.io/${{ env.IMAGE_OWNER }}/agente-rs:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

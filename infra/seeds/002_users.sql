@@ -3,7 +3,7 @@
 -- Idempotent: ON CONFLICT DO NOTHING on email (unique constraint)
 --
 -- Password for all seed users: DevPass123!
--- bcrypt hash (cost 10): $2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lxXy
+-- bcrypt hash (cost 10): $2a$10$0C2h/7oWHWDUi5F56HdoXeyWjchc0KIrvdpXfXv1Qndc7fnY3aYbG
 
 INSERT INTO users (id, tenant_id, email, password_hash, display_name, role, is_active, created_at, updated_at)
 VALUES
@@ -12,7 +12,7 @@ VALUES
         'a1000000-0000-0000-0001-000000000001',
         'a1000000-0000-0000-0000-000000000001',
         'admin@alpha.com',
-        '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lxXy',
+        '$2a$10$0C2h/7oWHWDUi5F56HdoXeyWjchc0KIrvdpXfXv1Qndc7fnY3aYbG',
         'Alpha Admin',
         'admin',
         true,
@@ -23,7 +23,7 @@ VALUES
         'a1000000-0000-0000-0001-000000000002',
         'a1000000-0000-0000-0000-000000000001',
         'operator@alpha.com',
-        '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lxXy',
+        '$2a$10$0C2h/7oWHWDUi5F56HdoXeyWjchc0KIrvdpXfXv1Qndc7fnY3aYbG',
         'Alpha Operator',
         'operator',
         true,
@@ -34,7 +34,7 @@ VALUES
         'a1000000-0000-0000-0001-000000000003',
         'a1000000-0000-0000-0000-000000000001',
         'viewer@alpha.com',
-        '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lxXy',
+        '$2a$10$0C2h/7oWHWDUi5F56HdoXeyWjchc0KIrvdpXfXv1Qndc7fnY3aYbG',
         'Alpha Viewer',
         'viewer',
         true,
@@ -46,7 +46,7 @@ VALUES
         'b2000000-0000-0000-0001-000000000001',
         'b2000000-0000-0000-0000-000000000001',
         'support@beta.com',
-        '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lxXy',
+        '$2a$10$0C2h/7oWHWDUi5F56HdoXeyWjchc0KIrvdpXfXv1Qndc7fnY3aYbG',
         'Beta Support Engineer',
         'support',
         true,
@@ -57,7 +57,7 @@ VALUES
         'b2000000-0000-0000-0001-000000000002',
         'b2000000-0000-0000-0000-000000000001',
         'admin@beta.com',
-        '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lxXy',
+        '$2a$10$0C2h/7oWHWDUi5F56HdoXeyWjchc0KIrvdpXfXv1Qndc7fnY3aYbG',
         'Beta Admin',
         'admin',
         true,

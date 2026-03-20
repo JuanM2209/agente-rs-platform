@@ -44,11 +44,16 @@ cloudflared login
 cloudflared tunnel list
 ```
 
+For this project, use the dedicated tunnel:
+
+- name: `agente-rs-public`
+- id: `8825530a-d505-4d9e-bd15-bbc1b85c1f15`
+
 ### Step 3: Configure DNS routes
 
 ```bash
-cloudflared tunnel route dns api-dbv portal.datadesng.com
-cloudflared tunnel route dns api-dbv api.datadesng.com
+cloudflared tunnel route dns agente-rs-public portal.datadesng.com
+cloudflared tunnel route dns agente-rs-public api.datadesng.com
 ```
 
 ### Step 4: Update tunnel config
@@ -56,13 +61,13 @@ cloudflared tunnel route dns api-dbv api.datadesng.com
 Edit `infra/cloudflare/tunnel-config.yml`:
 - Confirm `portal.datadesng.com`
 - Confirm `api.datadesng.com`
-- Confirm the tunnel name `api-dbv`
+- Confirm the tunnel identity for `agente-rs-public`
 
 ### Step 5: Run the tunnel
 
 ```bash
 # Manual run
-cloudflared tunnel --config infra/cloudflare/tunnel-config.yml run api-dbv
+cloudflared tunnel --config infra/cloudflare/tunnel-config.yml run agente-rs-public
 
 # Or as a service
 sudo cloudflared service install
