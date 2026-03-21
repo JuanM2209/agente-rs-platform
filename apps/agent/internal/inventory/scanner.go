@@ -35,9 +35,10 @@ type Endpoint struct {
 
 // Inventory is the full snapshot of what is running on the device.
 type Inventory struct {
-	Endpoints   []Endpoint `json:"endpoints"`
+	Endpoints    []Endpoint `json:"endpoints"`
 	Capabilities []string  `json:"capabilities"`
-	ScannedAt   time.Time  `json:"scanned_at"`
+	LocalIP      string    `json:"local_ip,omitempty"`
+	ScannedAt    time.Time `json:"scanned_at"`
 }
 
 // wellKnownPorts maps port numbers to (type, label) pairs.
@@ -127,6 +128,7 @@ func (s *Scanner) scan() {
 	}
 
 	inv := buildInventory(ports, serialPorts)
+	inv.LocalIP = LocalIP()
 	inv.ScannedAt = time.Now().UTC()
 
 	s.mu.Lock()

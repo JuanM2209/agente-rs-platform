@@ -286,6 +286,7 @@ type inventoryEventPayload struct {
 		SerialPort string `json:"serial_port,omitempty"`
 	} `json:"endpoints"`
 	Capabilities []string  `json:"capabilities"`
+	LocalIP      string    `json:"local_ip,omitempty"`
 	ScannedAt    time.Time `json:"scanned_at"`
 }
 
@@ -357,6 +358,17 @@ func (h *AgentHub) persistInventory(deviceStringID string, payload inventoryEven
 	}
 
 	h.touchDevice(deviceStringID, "online", time.Now().UTC(), &payload.ScannedAt)
+
+	if payload.LocalIP != "" {
+		if _, err := h.db.Exec(
+			context.Background(),
+			`UPDATE devices SET ip_address = $1::inet, updated_at = NOW() WHERE device_id = $2`,
+			payload.LocalIP,
+			deviceStringID,
+		); err != nil {
+			log.Warn().Err(err).Str("device_id", deviceStringID).Str("ip_address", payload.LocalIP).Msg("failed to update device ip_address")
+		}
+	}
 
 	for _, ep := range payload.Endpoints {
 		if ep.Type == "BRIDGE" && ep.SerialPort != "" {

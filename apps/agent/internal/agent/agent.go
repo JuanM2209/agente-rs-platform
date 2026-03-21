@@ -65,7 +65,13 @@ func (a *Agent) Connect() error {
 	if err := a.hub.Connect(); err != nil {
 		return fmt.Errorf("hub connect: %w", err)
 	}
-	return a.sendRegistration()
+	if err := a.sendRegistration(); err != nil {
+		return err
+	}
+	if err := a.sendInventoryUpdate(); err != nil {
+		a.log.Warn().Err(err).Msg("initial inventory update not yet available")
+	}
+	return nil
 }
 
 // Reconnect is called after a disconnect. It delegates backoff to the Hub,
@@ -75,7 +81,13 @@ func (a *Agent) Reconnect() error {
 	if err := a.hub.Connect(); err != nil {
 		return fmt.Errorf("hub reconnect: %w", err)
 	}
-	return a.sendRegistration()
+	if err := a.sendRegistration(); err != nil {
+		return err
+	}
+	if err := a.sendInventoryUpdate(); err != nil {
+		a.log.Warn().Err(err).Msg("inventory update unavailable during reconnect")
+	}
+	return nil
 }
 
 // Run starts the hub's read/write pumps in a goroutine, then enters the main

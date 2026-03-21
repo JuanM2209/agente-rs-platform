@@ -31,6 +31,14 @@ Current serial bridge behavior:
 - Activating MBUSD on `/dev/ttymxc5` temporarily interrupts Node-RED Modbus serial communication on that same port
 - A legacy-safe Nucleus installer now exists for older Docker 19.x ARMv7 devices: `scripts/install-remote-s-nucleus.sh`
 
+Current session UX behavior:
+
+- New sessions default to an `8 hour` minimum window
+- Admins can change the default session window from `Settings`
+- Device pages now show endpoints in a list-oriented operations view instead of cards
+- Operators can choose `Open Web Port` or `Export to Your Laptop`
+- Export flows can target a custom localhost port such as `127.0.0.1:1889`
+
 Current public test deployment is running on:
 
 - Portal: `https://portal.datadesng.com/login`

@@ -170,6 +170,31 @@ The current telemetry is transport-level TCP latency, not protocol-level applica
 6. Helper periodically reports connection status and latency
 7. When the helper closes the mapping, it also requests remote session stop
 
+## Session UX And Operator Defaults
+
+The portal now enforces and presents a longer support window by default.
+
+### Current session policy
+
+- New sessions default to `8 hours`
+- The Go API now clamps requested session TTL to a minimum of `8 hours`
+- Export sessions can specify a custom local laptop port through `local_port`
+
+### Settings behavior
+
+- The Settings page now includes an admin-only control for the default session duration
+- Allowed admin presets currently range from `8` to `24` hours
+- The setting is currently stored in browser local storage for the signed-in operator profile, not yet in central backend configuration
+
+### Device detail UX
+
+- Device endpoint actions are now presented as a list instead of separate cards
+- Each row gives clearer choices:
+  - `Open Web Port`
+  - `Export to Your Laptop`
+- Export workflows now allow a custom local target such as mapping remote `1880` to laptop `127.0.0.1:1889`
+- Serial bridge flows now ask for both the temporary bridge TCP port on the Nucleus and the laptop-side localhost export port
+
 ### History behavior
 
 - The Go API now writes a minimal `export_history` row when a session is explicitly stopped

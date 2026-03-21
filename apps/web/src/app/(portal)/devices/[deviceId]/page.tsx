@@ -1,25 +1,43 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { StatusOrb } from "@/components/ui/StatusOrb";
-import { getDeviceInventory, createSession, createModbusBridge, scanDevice, stopBridge } from "@/lib/api";
-import type { DeviceInventory, Endpoint, CreateSessionRequest } from "@/types";
 import { clsx } from "clsx";
+import { StatusOrb } from "@/components/ui/StatusOrb";
+import {
+  createModbusBridge,
+  createSession,
+  getDeviceInventory,
+  scanDevice,
+  stopBridge,
+} from "@/lib/api";
+import {
+  formatHoursLabel,
+  getPortalPreferences,
+  sessionHoursToSeconds,
+} from "@/lib/portal-settings";
+import type { CreateSessionRequest, DeviceInventory, Endpoint } from "@/types";
 
-const endpointMeta: Record<number, { icon: string; color: string }> = {
-  80: { icon: "language", color: "text-primary" },
-  443: { icon: "https", color: "text-tertiary" },
-  1880: { icon: "account_tree", color: "text-amber-400" },
-  9090: { icon: "monitor", color: "text-primary" },
-  502: { icon: "electrical_services", color: "text-orange-400" },
-  22: { icon: "terminal", color: "text-on-surface-variant" },
-  44818: { icon: "settings_ethernet", color: "text-purple-400" },
+const endpointMeta: Record<number, { icon: string; tone: string; family: string }> = {
+  22: { icon: "terminal", tone: "text-slate-300", family: "SSH" },
+  80: { icon: "language", tone: "text-sky-300", family: "HTTP" },
+  443: { icon: "lock", tone: "text-emerald-300", family: "HTTPS" },
+  502: { icon: "electrical_services", tone: "text-orange-300", family: "Modbus TCP" },
+  1880: { icon: "account_tree", tone: "text-cyan-300", family: "Node-RED" },
+  9090: { icon: "monitoring", tone: "text-indigo-300", family: "Web Console" },
+  44818: { icon: "settings_ethernet", tone: "text-violet-300", family: "EtherNet/IP" },
 };
 
-const defaultBridgeTTLSeconds = 3600;
 const defaultBridgeTCPPort = 5020;
 const fallbackModbusSerialPort = "/dev/ttymxc5";
+
+type SessionModalState = {
+  endpoint: Endpoint;
+  mode: "web" | "export";
+  localPort: number;
+  ttlHours: number;
+};
 
 type BridgeFormState = {
   serial_port: string;
@@ -28,59 +46,105 @@ type BridgeFormState = {
   stop_bits: 1 | 2;
   data_bits: 7 | 8;
   tcp_port: number;
+  export_local_port: number;
   acknowledge_warning: boolean;
 };
 
-function EndpointCard({
+function formatProtocol(endpoint: Endpoint) {
+  return endpoint.protocol.replace(/_/g, " ").toUpperCase();
+}
+
+function getEndpointMeta(port: number) {
+  return endpointMeta[port] || {
+    icon: "device_hub",
+    tone: "text-on-surface-variant",
+    family: "TCP Service",
+  };
+}
+
+function SectionHeader({
+  title,
+  caption,
+  count,
+}: {
+  title: string;
+  caption: string;
+  count: number;
+}) {
+  return (
+    <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+      <div>
+        <h2 className="font-headline text-2xl font-bold text-on-surface">{title}</h2>
+        <p className="text-sm text-on-surface-variant">{caption}</p>
+      </div>
+      <div className="rounded-xl bg-surface-container-highest px-4 py-2 text-xs font-technical uppercase tracking-[0.18em] text-on-surface-variant">
+        {count} available
+      </div>
+    </div>
+  );
+}
+
+function EndpointListRow({
   endpoint,
-  onOpen,
+  deviceIP,
+  onOpenWeb,
   onExport,
 }: {
   endpoint: Endpoint;
-  onOpen: (ep: Endpoint) => void;
-  onExport: (ep: Endpoint) => void;
+  deviceIP?: string;
+  onOpenWeb: (endpoint: Endpoint) => void;
+  onExport: (endpoint: Endpoint) => void;
 }) {
-  const meta = endpointMeta[endpoint.port] || { icon: "device_hub", color: "text-outline" };
+  const meta = getEndpointMeta(endpoint.port);
 
   return (
-    <div className="bg-surface-container-high rounded-xl p-5 hover:bg-surface-bright transition-colors group">
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <div className={`p-2.5 bg-surface-container-highest rounded-lg ${meta.color}`}>
-            <span className="material-symbols-outlined text-lg">{meta.icon}</span>
-          </div>
-          <div>
-            <p className="font-semibold text-on-surface text-sm">{endpoint.label}</p>
-            <p className="font-technical text-xs text-outline mt-0.5">
-              :{endpoint.port} / {endpoint.protocol.toUpperCase()}
-            </p>
-          </div>
+    <div className="grid gap-4 rounded-2xl border border-outline-variant/10 bg-surface-container-high px-5 py-4 transition-colors hover:bg-surface-container-highest lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.95fr)_auto]">
+      <div className="flex items-start gap-4">
+        <div className={clsx("rounded-xl bg-surface-container-highest p-3", meta.tone)}>
+          <span className="material-symbols-outlined text-lg">{meta.icon}</span>
         </div>
-        <span className="w-1.5 h-1.5 rounded-full bg-tertiary flex-shrink-0 mt-1" />
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="font-semibold text-on-surface">{endpoint.label}</p>
+            <span className="rounded-lg bg-surface-container-low px-2.5 py-1 text-[11px] font-technical uppercase tracking-[0.18em] text-on-surface-variant">
+              {meta.family}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-on-surface-variant">
+            {endpoint.description || "Ready for remote diagnostics, browser access, or laptop export."}
+          </p>
+        </div>
       </div>
 
-      {endpoint.description && (
-        <p className="text-xs text-on-surface-variant mb-4 leading-relaxed">
-          {endpoint.description}
-        </p>
-      )}
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+        <div className="rounded-xl bg-surface-container-low px-3 py-2">
+          <p className="text-[10px] uppercase tracking-[0.18em] text-outline">Remote Endpoint</p>
+          <p className="mt-1 font-technical text-sm text-on-surface">
+            {deviceIP || "Pending IP"}:{endpoint.port}
+          </p>
+        </div>
+        <div className="rounded-xl bg-surface-container-low px-3 py-2">
+          <p className="text-[10px] uppercase tracking-[0.18em] text-outline">Protocol</p>
+          <p className="mt-1 font-technical text-sm text-on-surface">{formatProtocol(endpoint)}</p>
+        </div>
+      </div>
 
-      <div className="flex gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row lg:flex-col lg:items-end">
         {endpoint.type === "WEB" && (
           <button
-            onClick={() => onOpen(endpoint)}
-            className="flex-1 flex items-center justify-center gap-2 bg-primary/10 hover:bg-primary/20 text-primary text-xs font-bold py-2 rounded-lg transition-colors"
+            onClick={() => onOpenWeb(endpoint)}
+            className="inline-flex min-w-[176px] items-center justify-center gap-2 rounded-xl bg-primary/10 px-4 py-3 text-sm font-semibold text-primary transition-colors hover:bg-primary/20"
           >
             <span className="material-symbols-outlined text-base">open_in_new</span>
-            Open Web
+            Open Web Port
           </button>
         )}
         <button
           onClick={() => onExport(endpoint)}
-          className="flex-1 flex items-center justify-center gap-2 bg-surface-container-highest hover:bg-outline-variant text-on-surface-variant hover:text-on-surface text-xs font-bold py-2 rounded-lg transition-colors"
+          className="inline-flex min-w-[176px] items-center justify-center gap-2 rounded-xl gradient-primary px-4 py-3 text-sm font-bold text-on-primary transition-all hover:shadow-primary"
         >
-          <span className="material-symbols-outlined text-base">output</span>
-          Export
+          <span className="material-symbols-outlined text-base">laptop_windows</span>
+          Export to Your Laptop
         </button>
       </div>
     </div>
@@ -91,15 +155,12 @@ export default function DeviceDetailPage() {
   const params = useParams();
   const router = useRouter();
   const deviceId = params.deviceId as string;
-
   const [inventory, setInventory] = useState<DeviceInventory | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [scanning, setScanning] = useState(false);
-  const [sessionModal, setSessionModal] = useState<{
-    endpoint: Endpoint;
-    mode: "web" | "export";
-  } | null>(null);
+  const [defaultSessionHours, setDefaultSessionHours] = useState(8);
+  const [sessionModal, setSessionModal] = useState<SessionModalState | null>(null);
   const [bridgeModal, setBridgeModal] = useState(false);
   const [creatingBridge, setCreatingBridge] = useState(false);
   const [bridgeError, setBridgeError] = useState("");
@@ -110,9 +171,9 @@ export default function DeviceDetailPage() {
     stop_bits: 1,
     data_bits: 8,
     tcp_port: defaultBridgeTCPPort,
+    export_local_port: defaultBridgeTCPPort,
     acknowledge_warning: false,
   });
-  const [activeTab, setActiveTab] = useState<"endpoints" | "sessions" | "history">("endpoints");
 
   const loadInventory = useCallback(async () => {
     setLoading(true);
@@ -121,14 +182,14 @@ export default function DeviceDetailPage() {
       const data = await getDeviceInventory(deviceId);
       setInventory(data);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Device not found";
-      setError(msg);
+      setError(err instanceof Error ? err.message : "Device not found");
     } finally {
       setLoading(false);
     }
   }, [deviceId]);
 
   useEffect(() => {
+    setDefaultSessionHours(getPortalPreferences().defaultSessionHours);
     void loadInventory();
   }, [loadInventory]);
 
@@ -137,19 +198,43 @@ export default function DeviceDetailPage() {
     try {
       await scanDevice(deviceId);
       await loadInventory();
-    } catch {
-      // ignore
     } finally {
       setScanning(false);
     }
   };
 
-  const handleOpenSession = (ep: Endpoint) => {
-    setSessionModal({ endpoint: ep, mode: "web" });
+  const openSessionModal = (endpoint: Endpoint, mode: "web" | "export") => {
+    setSessionModal({
+      endpoint,
+      mode,
+      localPort: endpoint.port,
+      ttlHours: getPortalPreferences().defaultSessionHours,
+    });
   };
 
-  const handleExport = (ep: Endpoint) => {
-    setSessionModal({ endpoint: ep, mode: "export" });
+  const handleCreateSession = async () => {
+    if (!sessionModal) return;
+
+    const req: CreateSessionRequest = {
+      endpoint_id: sessionModal.endpoint.id,
+      delivery_mode: sessionModal.mode,
+      ttl_seconds: sessionHoursToSeconds(sessionModal.ttlHours),
+      ...(sessionModal.mode === "export" ? { local_port: sessionModal.localPort } : {}),
+    };
+
+    try {
+      const session = await createSession(deviceId, req);
+      if (sessionModal.mode === "web") {
+        if (!session.tunnel_url) {
+          throw new Error("This web port still needs a device IP or tunnel target. Refresh inventory and try again.");
+        }
+        window.open(session.tunnel_url, "_blank", "noopener,noreferrer");
+      }
+      setSessionModal(null);
+      router.push("/sessions");
+    } catch (err: unknown) {
+      window.alert(err instanceof Error ? err.message : "Failed to create session.");
+    }
   };
 
   const openBridgeModal = () => {
@@ -165,6 +250,7 @@ export default function DeviceDetailPage() {
       stop_bits: 1,
       data_bits: 8,
       tcp_port: defaultBridgeTCPPort,
+      export_local_port: defaultBridgeTCPPort,
       acknowledge_warning: false,
     });
     setBridgeError("");
@@ -173,18 +259,13 @@ export default function DeviceDetailPage() {
 
   const handleCreateBridge = async () => {
     if (!inventory) return;
-    if (!bridgeForm.serial_port) {
-      setBridgeError("Select a serial port before starting the Modbus bridge.");
-      return;
-    }
     if (!bridgeForm.acknowledge_warning) {
-      setBridgeError("Confirm the Node-RED interruption warning before continuing.");
+      setBridgeError("Confirm the serial-port warning before creating the bridge.");
       return;
     }
 
     setCreatingBridge(true);
     setBridgeError("");
-
     let createdBridge: { id: string; endpoint_id?: string } | null = null;
 
     try {
@@ -195,6 +276,7 @@ export default function DeviceDetailPage() {
         stop_bits: bridgeForm.stop_bits,
         data_bits: bridgeForm.data_bits,
         tcp_port: bridgeForm.tcp_port,
+        ttl_seconds: sessionHoursToSeconds(defaultSessionHours),
       });
 
       if (!createdBridge.endpoint_id) {
@@ -204,527 +286,217 @@ export default function DeviceDetailPage() {
       await createSession(deviceId, {
         endpoint_id: createdBridge.endpoint_id,
         delivery_mode: "export",
-        ttl_seconds: defaultBridgeTTLSeconds,
+        ttl_seconds: sessionHoursToSeconds(defaultSessionHours),
+        local_port: bridgeForm.export_local_port,
       });
 
-      await loadInventory();
       setBridgeModal(false);
+      await loadInventory();
       router.push("/sessions");
     } catch (err: unknown) {
       if (createdBridge?.id) {
         try {
           await stopBridge(createdBridge.id);
         } catch {
-          // Best effort cleanup if session creation failed after the bridge started.
+          // best effort cleanup
         }
       }
-
-      setBridgeError(err instanceof Error ? err.message : "Failed to start MBUSD export bridge.");
+      setBridgeError(err instanceof Error ? err.message : "Failed to start the serial bridge.");
     } finally {
       setCreatingBridge(false);
     }
   };
 
-  const handleCreateSession = async () => {
-    if (!sessionModal) return;
-    const req: CreateSessionRequest = {
-      endpoint_id: sessionModal.endpoint.id,
-      delivery_mode: sessionModal.mode,
-      ttl_seconds: 3600,
-    };
-    try {
-      const session = await createSession(deviceId, req);
-      if (sessionModal.mode === "web" && session.tunnel_url) {
-        window.open(session.tunnel_url, "_blank", "noopener,noreferrer");
-      }
-      setSessionModal(null);
-      router.push("/sessions");
-    } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : "Failed to create session");
-    }
-  };
-
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <div className="w-12 h-12 rounded-full border-2 border-primary border-t-transparent animate-spin mx-auto mb-4" />
-          <p className="text-on-surface-variant text-sm">Loading device profile...</p>
-        </div>
-      </div>
-    );
+    return <div className="flex min-h-[60vh] items-center justify-center text-on-surface-variant">Loading device profile...</div>;
   }
 
   if (error || !inventory) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center max-w-sm">
-          <div className="w-16 h-16 rounded-full bg-error/10 flex items-center justify-center mx-auto mb-4">
-            <span className="material-symbols-outlined text-error text-2xl">device_unknown</span>
-          </div>
-          <h3 className="font-headline font-bold text-on-surface text-xl mb-2">Device Not Found</h3>
-          <p className="text-on-surface-variant text-sm mb-6">
-            {error || `No device with ID "${deviceId}" was found in your tenant.`}
-          </p>
-          <button
-            onClick={() => router.push("/dashboard")}
-            className="gradient-primary text-on-primary font-bold px-6 py-3 rounded-xl text-sm"
-          >
-            Back to Search
-          </button>
+      <div className="flex min-h-[60vh] items-center justify-center px-6">
+        <div className="rounded-3xl border border-outline-variant/10 bg-surface-container-high p-10 text-center">
+          <p className="font-headline text-3xl font-bold text-on-surface">Device Not Found</p>
+          <p className="mt-3 text-sm text-on-surface-variant">{error || `No device with ID "${deviceId}" was found.`}</p>
+          <button onClick={() => router.push("/dashboard")} className="mt-6 rounded-xl gradient-primary px-6 py-3 font-bold text-on-primary">Back to Search</button>
         </div>
       </div>
     );
   }
 
   const { device, endpoints, capabilities, freshness } = inventory;
+  const allEndpointCount = endpoints.web.length + endpoints.program.length + endpoints.bridge.length;
 
   return (
-    <div className="max-w-7xl mx-auto px-6 py-8 animate-fade-in">
-      {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-sm text-on-surface-variant mb-6">
-        <button onClick={() => router.push("/dashboard")} className="hover:text-on-surface transition-colors">
-          Home
-        </button>
-        <span className="material-symbols-outlined text-base">chevron_right</span>
-        <span className="font-technical text-primary">{device.device_id}</span>
-      </div>
-
-      {/* Device header */}
-      <div className="bg-surface-container-low rounded-xl p-8 mb-6">
-        <div className="flex flex-col lg:flex-row lg:items-start gap-6 justify-between">
-          <div className="flex items-start gap-5">
-            <div className="w-16 h-16 rounded-xl bg-surface-container-high flex items-center justify-center flex-shrink-0">
-              <span className="material-symbols-outlined text-primary text-3xl">memory</span>
-            </div>
-            <div>
-              <div className="flex items-center gap-3 mb-1">
-                <h1 className="font-headline text-2xl font-bold text-on-surface">
-                  {device.display_name || device.device_id}
-                </h1>
-                <StatusOrb status={device.status} showLabel animate />
-              </div>
-              <p className="font-technical text-sm text-on-surface-variant">{device.device_id}</p>
-              {device.site && (
-                <p className="text-sm text-on-surface-variant mt-1 flex items-center gap-1">
-                  <span className="material-symbols-outlined text-base">location_on</span>
-                  {device.site.name}
-                  {device.site.location && ` — ${device.site.location}`}
-                </p>
-              )}
-            </div>
+    <div className="mx-auto max-w-7xl px-6 py-8">
+      <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="mb-3 flex items-center gap-3">
+            <StatusOrb status={device.status} showLabel animate />
+            <span className="rounded-lg bg-surface-container-high px-3 py-1 text-[11px] font-technical uppercase tracking-[0.18em] text-primary">
+              {device.device_id}
+            </span>
           </div>
-
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={handleScan}
-              disabled={scanning}
-              className="flex items-center gap-2 bg-surface-container-high hover:bg-surface-bright px-4 py-2.5 rounded-xl text-sm font-medium text-on-surface-variant hover:text-on-surface transition-colors"
-            >
-              <span className={clsx("material-symbols-outlined text-base", scanning && "animate-spin")}>
-                refresh
-              </span>
-              {scanning ? "Scanning..." : "Refresh Inventory"}
-            </button>
-            <button className="flex items-center gap-2 bg-surface-container-high hover:bg-surface-bright px-4 py-2.5 rounded-xl text-sm font-medium text-on-surface-variant hover:text-on-surface transition-colors">
-              <span className="material-symbols-outlined text-base">history</span>
-              Session History
-            </button>
-          </div>
+          <h1 className="font-headline text-4xl font-bold text-on-surface">{device.display_name || device.device_id}</h1>
+          <p className="mt-2 max-w-3xl text-sm text-on-surface-variant">
+            Choose a discovered port from the list below, open browser-ready services instantly, or export any TCP port to a custom localhost port on your laptop.
+          </p>
         </div>
-
-        {/* Metadata chips */}
-        <div className="mt-6 flex flex-wrap gap-3">
-          {device.firmware_version && (
-            <div className="flex items-center gap-2 bg-surface-container-high px-3 py-1.5 rounded-lg">
-              <span className="material-symbols-outlined text-outline text-base">system_update</span>
-              <span className="text-xs font-technical text-on-surface-variant">
-                FW {device.firmware_version}
-              </span>
-            </div>
-          )}
-          {device.ip_address && (
-            <div className="flex items-center gap-2 bg-surface-container-high px-3 py-1.5 rounded-lg">
-              <span className="material-symbols-outlined text-outline text-base">dns</span>
-              <span className="text-xs font-technical text-on-surface-variant">{device.ip_address}</span>
-            </div>
-          )}
-          {freshness && (
-            <div className="flex items-center gap-2 bg-surface-container-high px-3 py-1.5 rounded-lg">
-              <span className={clsx("material-symbols-outlined text-base", freshness.is_stale ? "text-error" : "text-tertiary")}>
-                {freshness.is_stale ? "warning" : "check_circle"}
-              </span>
-              <span className="text-xs font-technical text-on-surface-variant">
-                {freshness.is_stale ? "Stale inventory" : "Inventory fresh"}
-              </span>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex gap-1 bg-surface-container-low rounded-xl p-1 mb-6 w-fit">
-        {(["endpoints", "sessions", "history"] as const).map((tab) => (
+        <div className="flex flex-wrap gap-3">
           <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={clsx(
-              "px-5 py-2.5 rounded-lg text-sm font-medium transition-colors capitalize",
-              activeTab === tab
-                ? "bg-surface-container-high text-on-surface"
-                : "text-on-surface-variant hover:text-on-surface",
-            )}
+            onClick={handleScan}
+            disabled={scanning}
+            className="inline-flex items-center gap-2 rounded-xl bg-surface-container-high px-4 py-3 text-sm font-semibold text-on-surface transition-colors hover:bg-surface-container-highest"
           >
-            {tab}
+            <span className={clsx("material-symbols-outlined text-base", scanning && "animate-spin")}>refresh</span>
+            {scanning ? "Refreshing..." : "Refresh Inventory"}
           </button>
-        ))}
+          <Link href="/settings" className="inline-flex items-center gap-2 rounded-xl border border-outline-variant/10 bg-surface-container-low px-4 py-3 text-sm font-semibold text-on-surface-variant transition-colors hover:bg-surface-container-high">
+            <span className="material-symbols-outlined text-base">settings</span>
+            Session Settings
+          </Link>
+        </div>
       </div>
 
-      {activeTab === "endpoints" && (
-        <div className="space-y-8">
-          {/* WEB endpoints */}
-          {endpoints.web.length > 0 && (
-            <div>
-              <div className="flex items-center gap-3 mb-4">
-                <div className="p-1.5 bg-primary/10 rounded-lg">
-                  <span className="material-symbols-outlined text-primary text-base">language</span>
-                </div>
-                <h2 className="font-headline font-bold text-on-surface">Web Endpoints</h2>
-                <span className="text-xs font-technical text-on-surface-variant bg-surface-container-high px-2 py-0.5 rounded">
-                  {endpoints.web.length} available
-                </span>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {endpoints.web.map((ep) => (
-                  <EndpointCard
-                    key={ep.id}
-                    endpoint={ep}
-                    onOpen={handleOpenSession}
-                    onExport={handleExport}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
+      <div className="mb-8 grid gap-4 lg:grid-cols-3">
+        <div className="rounded-2xl border border-outline-variant/10 bg-surface-container-high p-5">
+          <p className="text-[11px] uppercase tracking-[0.18em] text-outline">Default Session Window</p>
+          <p className="mt-2 font-headline text-3xl text-on-surface">{defaultSessionHours}h</p>
+          <p className="mt-2 text-xs text-on-surface-variant">New sessions start at {formatHoursLabel(defaultSessionHours)}. Admins can change the default in Settings.</p>
+        </div>
+        <div className="rounded-2xl border border-outline-variant/10 bg-surface-container-high p-5">
+          <p className="text-[11px] uppercase tracking-[0.18em] text-outline">Available Endpoints</p>
+          <p className="mt-2 font-headline text-3xl text-on-surface">{allEndpointCount}</p>
+          <p className="mt-2 text-xs text-on-surface-variant">Web, program, and temporary bridge ports ready for remote support workflows.</p>
+        </div>
+        <div className="rounded-2xl border border-outline-variant/10 bg-surface-container-high p-5">
+          <p className="text-[11px] uppercase tracking-[0.18em] text-outline">Current Device IP</p>
+          <p className="mt-2 font-technical text-2xl text-on-surface">{device.ip_address || "Pending scan"}</p>
+          <p className="mt-2 text-xs text-on-surface-variant">Last inventory scan: {new Date(freshness.last_scan).toLocaleString()}</p>
+        </div>
+      </div>
 
-          {/* PROGRAM endpoints */}
-          {endpoints.program.length > 0 && (
-            <div>
-              <div className="flex items-center gap-3 mb-4">
-                <div className="p-1.5 bg-orange-400/10 rounded-lg">
-                  <span className="material-symbols-outlined text-orange-400 text-base">
-                    electrical_services
-                  </span>
-                </div>
-                <h2 className="font-headline font-bold text-on-surface">Program Endpoints</h2>
-                <span className="text-xs font-technical text-on-surface-variant bg-surface-container-high px-2 py-0.5 rounded">
-                  {endpoints.program.length} available
-                </span>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {endpoints.program.map((ep) => (
-                  <EndpointCard
-                    key={ep.id}
-                    endpoint={ep}
-                    onOpen={handleOpenSession}
-                    onExport={handleExport}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* BRIDGE endpoints */}
-          {(endpoints.bridge.length > 0 || capabilities.has_serial) && (
-            <div>
-              <div className="flex items-center gap-3 mb-4">
-                <div className="p-1.5 bg-purple-400/10 rounded-lg">
-                  <span className="material-symbols-outlined text-purple-400 text-base">
-                    settings_ethernet
-                  </span>
-                </div>
-                <h2 className="font-headline font-bold text-on-surface">Serial Bridges</h2>
-                {capabilities.has_serial && (
-                  <span className="text-xs font-technical text-tertiary bg-tertiary/10 px-2 py-0.5 rounded">
-                    Serial capable
-                  </span>
-                )}
-              </div>
-
-              {capabilities.has_serial && (
-                <div className="bg-surface-container-high rounded-xl p-6 border border-outline-variant/10">
-                  {capabilities.activation_warning && (
-                    <div className="mb-5 rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3">
-                      <div className="flex items-start gap-3">
-                        <span className="material-symbols-outlined text-amber-300 text-base mt-0.5">
-                          warning
-                        </span>
-                        <div>
-                          <p className="text-sm font-semibold text-amber-200">
-                            Shared Serial Port Warning
-                          </p>
-                          <p className="text-xs text-amber-100/90 mt-1 leading-relaxed">
-                            {capabilities.activation_warning}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <p className="font-semibold text-on-surface mb-1">Modbus Serial Bridge</p>
-                      <p className="text-sm text-on-surface-variant">
-                        Create an ephemeral TCP bridge over a serial port (MBUSD) and export it to the helper.
-                      </p>
-                      <div className="flex flex-wrap gap-2 mt-3">
-                        {capabilities.serial_ports.map((port) => (
-                          <span
-                            key={port}
-                            className="font-technical text-xs bg-surface-container-highest px-2 py-1 rounded text-on-surface-variant"
-                          >
-                            {port}
-                          </span>
-                        ))}
-                        {capabilities.bundled_bridge_binary && (
-                          <span className="font-technical text-xs bg-primary/10 px-2 py-1 rounded text-primary">
-                            {capabilities.bundled_bridge_binary}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <button
-                      onClick={openBridgeModal}
-                      className="flex items-center gap-2 gradient-primary text-on-primary font-bold px-5 py-2.5 rounded-xl text-sm hover:shadow-primary transition-all active:scale-95 flex-shrink-0 ml-4"
-                    >
-                      <span className="material-symbols-outlined text-base">add_link</span>
-                      Start MBUSD + Export
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {endpoints.web.length === 0 &&
-            endpoints.program.length === 0 &&
-            !capabilities.has_serial && (
-              <div className="text-center py-16">
-                <div className="w-16 h-16 rounded-full bg-surface-container-high flex items-center justify-center mx-auto mb-4">
-                  <span className="material-symbols-outlined text-outline text-2xl">sensors_off</span>
-                </div>
-                <p className="font-headline font-bold text-on-surface mb-2">No Endpoints Found</p>
-                <p className="text-sm text-on-surface-variant">
-                  Run a scan to discover endpoints on this device.
-                </p>
-                <button
-                  onClick={handleScan}
-                  className="mt-4 gradient-primary text-on-primary font-bold px-6 py-3 rounded-xl text-sm"
-                >
-                  Scan Now
-                </button>
-              </div>
-            )}
+      {freshness.is_stale && (
+        <div className="mb-8 rounded-2xl border border-amber-400/20 bg-amber-400/10 px-5 py-4 text-sm text-amber-100">
+          Inventory is stale. Refresh the device before opening or exporting ports so the customer sees the latest IP and service state.
         </div>
       )}
 
-      {activeTab === "sessions" && (
-        <div className="bg-surface-container-low rounded-xl p-8 text-center">
-          <span className="material-symbols-outlined text-outline text-4xl">sensors</span>
-          <p className="text-on-surface-variant mt-2">Active sessions view — coming soon</p>
-          <a href="/sessions" className="text-primary text-sm mt-2 inline-block">
-            View all active sessions →
-          </a>
-        </div>
-      )}
-
-      {activeTab === "history" && (
-        <div className="bg-surface-container-low rounded-xl p-8 text-center">
-          <span className="material-symbols-outlined text-outline text-4xl">history</span>
-          <p className="text-on-surface-variant mt-2">Export history for this device</p>
-          <a href="/history" className="text-primary text-sm mt-2 inline-block">
-            View full history →
-          </a>
-        </div>
-      )}
-
-      {/* Session Modal */}
-      {sessionModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-surface-bright rounded-xl p-8 w-full max-w-md mx-4 surface-shadow">
-            <h3 className="font-headline font-bold text-on-surface text-xl mb-2">
-              {sessionModal.mode === "web" ? "Open Web Session" : "Export Port"}
-            </h3>
-            <p className="text-sm text-on-surface-variant mb-6">
-              {sessionModal.mode === "web"
-                ? "This will create a temporary web session and open the device UI in a new tab."
-                : "This will create a local TCP mapping via the Nucleus Windows Helper."}
-            </p>
-
-            <div className="bg-surface-container-high rounded-xl p-4 mb-6">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-on-surface-variant">Endpoint</span>
-                <span className="font-technical text-sm text-on-surface">
-                  {sessionModal.endpoint.label} :{sessionModal.endpoint.port}
-                </span>
-              </div>
-              <div className="flex items-center justify-between mt-2">
-                <span className="text-sm text-on-surface-variant">TTL</span>
-                <span className="font-technical text-sm text-on-surface">1 hour</span>
-              </div>
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => setSessionModal(null)}
-                className="flex-1 py-3 rounded-xl text-sm font-medium text-on-surface-variant hover:bg-surface-container-high transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateSession}
-                className="flex-1 gradient-primary text-on-primary font-bold py-3 rounded-xl text-sm hover:shadow-primary transition-all"
-              >
-                {sessionModal.mode === "web" ? "Open Session" : "Export"}
-              </button>
-            </div>
+      <div className="space-y-8">
+        <section className="space-y-4">
+          <SectionHeader title="Web Ports" caption="Browser-friendly services that can open directly in a new tab or be exported to your laptop." count={endpoints.web.length} />
+          <div className="space-y-3">
+            {endpoints.web.length > 0 ? endpoints.web.map((endpoint) => (
+              <EndpointListRow key={endpoint.id} endpoint={endpoint} deviceIP={device.ip_address} onOpenWeb={(ep) => openSessionModal(ep, "web")} onExport={(ep) => openSessionModal(ep, "export")} />
+            )) : <div className="rounded-2xl border border-dashed border-outline-variant/20 bg-surface-container-low px-5 py-8 text-sm text-on-surface-variant">No browser-ready services are currently available on this device.</div>}
           </div>
-        </div>
-      )}
+        </section>
 
-      {/* Bridge Modal */}
-      {bridgeModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-surface-bright rounded-xl p-8 w-full max-w-md mx-4 surface-shadow">
-            <h3 className="font-headline font-bold text-on-surface text-xl mb-2">
-              Create Modbus Serial Bridge
-            </h3>
-            <p className="text-sm text-on-surface-variant mb-6">
-              Start an MBUSD bridge on the Nucleus and immediately export that serial Modbus channel to the helper.
+        <section className="space-y-4">
+          <SectionHeader title="Program Ports" caption="Industrial protocols and engineering ports that are typically exported into a local laptop tool." count={endpoints.program.length} />
+          <div className="space-y-3">
+            {endpoints.program.length > 0 ? endpoints.program.map((endpoint) => (
+              <EndpointListRow key={endpoint.id} endpoint={endpoint} deviceIP={device.ip_address} onOpenWeb={(ep) => openSessionModal(ep, "web")} onExport={(ep) => openSessionModal(ep, "export")} />
+            )) : <div className="rounded-2xl border border-dashed border-outline-variant/20 bg-surface-container-low px-5 py-8 text-sm text-on-surface-variant">No program ports were discovered in the latest scan.</div>}
+          </div>
+        </section>
+
+        {capabilities.has_serial && (
+          <section className="space-y-4">
+            <SectionHeader title="Serial Modbus Bridge" caption="Temporarily convert the Nucleus serial port into Modbus TCP with MBUSD, then export it to your laptop." count={capabilities.serial_ports.length} />
+            <div className="rounded-3xl border border-outline-variant/10 bg-surface-container-high p-6">
+              <div className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+                <div>
+                  <div className="mb-4 flex flex-wrap gap-2">
+                    {capabilities.serial_ports.map((serialPort) => (
+                      <span key={serialPort} className="rounded-lg bg-surface-container-highest px-3 py-1 text-xs font-technical text-on-surface-variant">{serialPort}</span>
+                    ))}
+                    {capabilities.bundled_bridge_binary && (
+                      <span className="rounded-lg bg-primary/10 px-3 py-1 text-xs font-technical text-primary">{capabilities.bundled_bridge_binary}</span>
+                    )}
+                  </div>
+                  <p className="text-sm text-on-surface-variant">
+                    Use this when the customer needs Modbus Poll, Prolink, or another TCP-based tool to reach a serial-only meter or controller through the Nucleus.
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4">
+                  <p className="font-semibold text-amber-200">Important warning</p>
+                  <p className="mt-2 text-sm text-amber-100/90">
+                    Activating MBUSD on <span className="font-technical">{capabilities.modbus_serial_port || fallbackModbusSerialPort}</span> temporarily interrupts Node-RED Modbus serial communication on the same port until the bridge stops.
+                  </p>
+                  <button onClick={openBridgeModal} className="mt-4 inline-flex items-center gap-2 rounded-xl gradient-primary px-4 py-3 text-sm font-bold text-on-primary">
+                    <span className="material-symbols-outlined text-base">add_link</span>
+                    Start Serial Export
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+      </div>
+
+      {sessionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-xl rounded-3xl border border-outline-variant/10 bg-surface-bright p-8 surface-shadow">
+            <h3 className="font-headline text-3xl font-bold text-on-surface">{sessionModal.mode === "web" ? "Open Web Port" : "Export to Your Laptop"}</h3>
+            <p className="mt-3 text-sm text-on-surface-variant">
+              {sessionModal.mode === "web"
+                ? "Launch a browser session for this device service. The session remains active for the configured default window."
+                : "Map this remote device port into your laptop helper and choose the localhost port you want to use."}
             </p>
-            <div className="space-y-4 mb-6">
-              <div>
-                <label className="text-sm text-on-surface-variant block mb-1">Serial Port</label>
-                <select
-                  value={bridgeForm.serial_port}
-                  onChange={(e) => setBridgeForm((current) => ({ ...current, serial_port: e.target.value }))}
-                  className="w-full bg-surface-container-high rounded-xl px-4 py-3 text-sm text-on-surface border-b-2 border-transparent focus:border-primary outline-none"
-                >
-                  {capabilities.serial_ports.map((p) => (
-                    <option key={p} value={p}>{p}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-sm text-on-surface-variant block mb-1">Baud Rate</label>
-                <select
-                  value={bridgeForm.baud_rate}
-                  onChange={(e) => setBridgeForm((current) => ({ ...current, baud_rate: Number(e.target.value) }))}
-                  className="w-full bg-surface-container-high rounded-xl px-4 py-3 text-sm text-on-surface border-b-2 border-transparent focus:border-primary outline-none"
-                >
-                  {[9600, 19200, 38400, 57600, 115200].map((b) => (
-                    <option key={b} value={b}>{b}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="text-sm text-on-surface-variant block mb-1">Parity</label>
-                  <select
-                    value={bridgeForm.parity}
-                    onChange={(e) => setBridgeForm((current) => ({ ...current, parity: e.target.value as "N" | "E" | "O" }))}
-                    className="w-full bg-surface-container-high rounded-xl px-4 py-3 text-sm text-on-surface border-b-2 border-transparent focus:border-primary outline-none"
-                  >
-                    <option value="N">None</option>
-                    <option value="E">Even</option>
-                    <option value="O">Odd</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-sm text-on-surface-variant block mb-1">Data Bits</label>
-                  <select
-                    value={bridgeForm.data_bits}
-                    onChange={(e) => setBridgeForm((current) => ({ ...current, data_bits: Number(e.target.value) as 7 | 8 }))}
-                    className="w-full bg-surface-container-high rounded-xl px-4 py-3 text-sm text-on-surface border-b-2 border-transparent focus:border-primary outline-none"
-                  >
-                    <option value={7}>7</option>
-                    <option value={8}>8</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-sm text-on-surface-variant block mb-1">Stop Bits</label>
-                  <select
-                    value={bridgeForm.stop_bits}
-                    onChange={(e) => setBridgeForm((current) => ({ ...current, stop_bits: Number(e.target.value) as 1 | 2 }))}
-                    className="w-full bg-surface-container-high rounded-xl px-4 py-3 text-sm text-on-surface border-b-2 border-transparent focus:border-primary outline-none"
-                  >
-                    <option value={1}>1</option>
-                    <option value={2}>2</option>
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="text-sm text-on-surface-variant block mb-1">Bridge TCP Port</label>
+            <div className="mt-6 grid gap-4 rounded-2xl bg-surface-container-high p-5 md:grid-cols-2">
+              <div><p className="text-[10px] uppercase tracking-[0.18em] text-outline">Remote Port</p><p className="mt-1 font-technical text-xl text-on-surface">{device.ip_address || "Pending"}:{sessionModal.endpoint.port}</p></div>
+              <div><p className="text-[10px] uppercase tracking-[0.18em] text-outline">Session Window</p><p className="mt-1 font-technical text-xl text-on-surface">{sessionModal.ttlHours}h</p></div>
+            </div>
+            {sessionModal.mode === "export" && (
+              <div className="mt-5">
+                <label className="mb-2 block text-sm text-on-surface-variant">Laptop localhost port</label>
                 <input
                   type="number"
-                  min={1024}
+                  min={1}
                   max={65535}
-                  value={bridgeForm.tcp_port}
-                  onChange={(e) => setBridgeForm((current) => ({ ...current, tcp_port: Number(e.target.value) }))}
-                  className="w-full bg-surface-container-high rounded-xl px-4 py-3 text-sm text-on-surface border-b-2 border-transparent focus:border-primary outline-none"
+                  value={sessionModal.localPort}
+                  onChange={(e) => setSessionModal((current) => current ? { ...current, localPort: Number(e.target.value) || current.endpoint.port } : current)}
+                  className="w-full rounded-xl border border-outline-variant/10 bg-surface-container-high px-4 py-3 text-sm text-on-surface outline-none focus:border-primary"
                 />
-                <p className="text-xs text-on-surface-variant mt-2">
-                  This temporary TCP port is created on the Nucleus before being exported to the laptop helper.
-                </p>
+                <p className="mt-2 text-xs text-on-surface-variant">Example: export device port {sessionModal.endpoint.port} to <span className="font-technical">127.0.0.1:1889</span> if your tool expects a custom local port.</p>
               </div>
-              <div className="rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3">
-                <div className="flex items-start gap-3">
-                  <span className="material-symbols-outlined text-amber-300 text-base mt-0.5">
-                    warning
-                  </span>
-                  <div>
-                    <p className="text-sm font-semibold text-amber-200">
-                      Node-RED serial communication will be interrupted
-                    </p>
-                    <p className="text-xs text-amber-100/90 mt-1 leading-relaxed">
-                      MBUSD uses <span className="font-technical">{bridgeForm.serial_port || fallbackModbusSerialPort}</span>.
-                      While this serial bridge is active, Node-RED Modbus communication that shares the same serial port will be temporarily unavailable.
-                    </p>
-                  </div>
-                </div>
-              </div>
-              <label className="flex items-start gap-3 rounded-xl bg-surface-container-high px-4 py-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={bridgeForm.acknowledge_warning}
-                  onChange={(e) => setBridgeForm((current) => ({ ...current, acknowledge_warning: e.target.checked }))}
-                  className="mt-1"
-                />
-                <span className="text-sm text-on-surface-variant">
-                  I understand that enabling MBUSD on <span className="font-technical">{bridgeForm.serial_port || fallbackModbusSerialPort}</span> temporarily interrupts Node-RED Modbus serial communication.
-                </span>
-              </label>
-              {bridgeError && (
-                <div className="rounded-xl border border-error/30 bg-error/10 px-4 py-3 text-sm text-error">
-                  {bridgeError}
-                </div>
-              )}
+            )}
+            <div className="mt-8 flex gap-3">
+              <button onClick={() => setSessionModal(null)} className="flex-1 rounded-xl px-4 py-3 text-sm font-semibold text-on-surface-variant transition-colors hover:bg-surface-container-high">Cancel</button>
+              <button onClick={handleCreateSession} className="flex-1 rounded-xl gradient-primary px-4 py-3 text-sm font-bold text-on-primary">{sessionModal.mode === "web" ? "Open Web Port" : "Export Port"}</button>
             </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setBridgeModal(false)}
-                disabled={creatingBridge}
-                className="flex-1 py-3 rounded-xl text-sm font-medium text-on-surface-variant hover:bg-surface-container-high transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateBridge}
-                disabled={creatingBridge}
-                className="flex-1 gradient-primary text-on-primary font-bold py-3 rounded-xl text-sm hover:shadow-primary transition-all disabled:opacity-60"
-              >
-                {creatingBridge ? "Starting..." : "Start Bridge + Export"}
-              </button>
+          </div>
+        </div>
+      )}
+
+      {bridgeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-2xl rounded-3xl border border-outline-variant/10 bg-surface-bright p-8 surface-shadow">
+            <h3 className="font-headline text-3xl font-bold text-on-surface">Create Serial Modbus Export</h3>
+            <p className="mt-3 text-sm text-on-surface-variant">Build an MBUSD bridge on the Nucleus, then export that temporary TCP port to the localhost port of your choice.</p>
+            <div className="mt-6 grid gap-4 md:grid-cols-2">
+              <div><label className="mb-2 block text-sm text-on-surface-variant">Serial Port</label><select value={bridgeForm.serial_port} onChange={(e) => setBridgeForm((current) => ({ ...current, serial_port: e.target.value }))} className="w-full rounded-xl border border-outline-variant/10 bg-surface-container-high px-4 py-3 text-sm text-on-surface outline-none focus:border-primary">{capabilities.serial_ports.map((port) => <option key={port} value={port}>{port}</option>)}</select></div>
+              <div><label className="mb-2 block text-sm text-on-surface-variant">Baud Rate</label><select value={bridgeForm.baud_rate} onChange={(e) => setBridgeForm((current) => ({ ...current, baud_rate: Number(e.target.value) }))} className="w-full rounded-xl border border-outline-variant/10 bg-surface-container-high px-4 py-3 text-sm text-on-surface outline-none focus:border-primary">{[9600, 19200, 38400, 57600, 115200].map((baud) => <option key={baud} value={baud}>{baud}</option>)}</select></div>
+              <div><label className="mb-2 block text-sm text-on-surface-variant">Bridge TCP Port on Nucleus</label><input type="number" min={1024} max={65535} value={bridgeForm.tcp_port} onChange={(e) => setBridgeForm((current) => ({ ...current, tcp_port: Number(e.target.value) || defaultBridgeTCPPort }))} className="w-full rounded-xl border border-outline-variant/10 bg-surface-container-high px-4 py-3 text-sm text-on-surface outline-none focus:border-primary" /></div>
+              <div><label className="mb-2 block text-sm text-on-surface-variant">Laptop localhost export port</label><input type="number" min={1} max={65535} value={bridgeForm.export_local_port} onChange={(e) => setBridgeForm((current) => ({ ...current, export_local_port: Number(e.target.value) || current.tcp_port }))} className="w-full rounded-xl border border-outline-variant/10 bg-surface-container-high px-4 py-3 text-sm text-on-surface outline-none focus:border-primary" /></div>
+            </div>
+            <div className="mt-4 grid gap-4 md:grid-cols-3">
+              <div><label className="mb-2 block text-sm text-on-surface-variant">Parity</label><select value={bridgeForm.parity} onChange={(e) => setBridgeForm((current) => ({ ...current, parity: e.target.value as "N" | "E" | "O" }))} className="w-full rounded-xl border border-outline-variant/10 bg-surface-container-high px-4 py-3 text-sm text-on-surface outline-none focus:border-primary"><option value="N">None</option><option value="E">Even</option><option value="O">Odd</option></select></div>
+              <div><label className="mb-2 block text-sm text-on-surface-variant">Data Bits</label><select value={bridgeForm.data_bits} onChange={(e) => setBridgeForm((current) => ({ ...current, data_bits: Number(e.target.value) as 7 | 8 }))} className="w-full rounded-xl border border-outline-variant/10 bg-surface-container-high px-4 py-3 text-sm text-on-surface outline-none focus:border-primary"><option value={7}>7</option><option value={8}>8</option></select></div>
+              <div><label className="mb-2 block text-sm text-on-surface-variant">Stop Bits</label><select value={bridgeForm.stop_bits} onChange={(e) => setBridgeForm((current) => ({ ...current, stop_bits: Number(e.target.value) as 1 | 2 }))} className="w-full rounded-xl border border-outline-variant/10 bg-surface-container-high px-4 py-3 text-sm text-on-surface outline-none focus:border-primary"><option value={1}>1</option><option value={2}>2</option></select></div>
+            </div>
+            <div className="mt-5 rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4">
+              <p className="font-semibold text-amber-200">Customer warning</p>
+              <p className="mt-2 text-sm text-amber-100/90">While this MBUSD bridge is active on <span className="font-technical">{bridgeForm.serial_port}</span>, Node-RED Modbus serial communication on the same port will be paused.</p>
+            </div>
+            <label className="mt-4 flex items-start gap-3 rounded-2xl bg-surface-container-high px-4 py-4">
+              <input type="checkbox" checked={bridgeForm.acknowledge_warning} onChange={(e) => setBridgeForm((current) => ({ ...current, acknowledge_warning: e.target.checked }))} className="mt-1" />
+              <span className="text-sm text-on-surface-variant">I understand the serial-port interruption and want to continue with the export.</span>
+            </label>
+            {bridgeError && <div className="mt-4 rounded-xl border border-error/30 bg-error/10 px-4 py-3 text-sm text-error">{bridgeError}</div>}
+            <div className="mt-8 flex gap-3">
+              <button onClick={() => setBridgeModal(false)} disabled={creatingBridge} className="flex-1 rounded-xl px-4 py-3 text-sm font-semibold text-on-surface-variant transition-colors hover:bg-surface-container-high">Cancel</button>
+              <button onClick={handleCreateBridge} disabled={creatingBridge} className="flex-1 rounded-xl gradient-primary px-4 py-3 text-sm font-bold text-on-primary disabled:opacity-60">{creatingBridge ? "Starting..." : "Start Serial Export"}</button>
             </div>
           </div>
         </div>

@@ -39,6 +39,7 @@ type createSessionRequest struct {
 	DeliveryMode       string `json:"delivery_mode"`
 	TTLSeconds         int    `json:"ttl_seconds"`
 	IdleTimeoutSeconds int    `json:"idle_timeout_seconds"`
+	LocalPort          int    `json:"local_port"`
 }
 
 type updateTelemetryRequest struct {
@@ -48,6 +49,11 @@ type updateTelemetryRequest struct {
 	LastError        string     `json:"last_error"`
 	ProbeSource      string     `json:"probe_source"`
 }
+
+const (
+	minSessionTTLSeconds = 8 * 60 * 60
+	maxPortNumber        = 65535
+)
 
 // CreateSession handles POST /api/v1/devices/:deviceId/sessions.
 func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
@@ -77,11 +83,11 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		deliveryMode = models.DeliveryModeWeb
 	}
 
-	if req.TTLSeconds <= 0 {
-		req.TTLSeconds = 3600
+	if req.TTLSeconds < minSessionTTLSeconds {
+		req.TTLSeconds = minSessionTTLSeconds
 	}
-	if req.IdleTimeoutSeconds <= 0 {
-		req.IdleTimeoutSeconds = 900
+	if req.IdleTimeoutSeconds < minSessionTTLSeconds {
+		req.IdleTimeoutSeconds = req.TTLSeconds
 	}
 
 	device, endpoint, err := h.resolveDeviceAndEndpoint(r.Context(), deviceID, req.EndpointID, tenantID)
@@ -115,6 +121,18 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 			Error:   "device is not connected",
 		})
 		return
+	}
+
+	localPort := endpoint.Port
+	if deliveryMode == models.DeliveryModeExport && req.LocalPort > 0 {
+		if req.LocalPort > maxPortNumber {
+			writeJSON(w, http.StatusBadRequest, models.APIResponse{
+				Success: false,
+				Error:   "local_port must be between 1 and 65535",
+			})
+			return
+		}
+		localPort = req.LocalPort
 	}
 
 	sessionID := uuid.New().String()
@@ -158,7 +176,7 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		userID,
 		tenantID,
 		models.SessionStatusActive,
-		endpoint.Port,
+		localPort,
 		endpoint.Port,
 		string(deliveryMode),
 		req.TTLSeconds,
@@ -202,7 +220,7 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		UserID:             userID,
 		TenantID:           tenantID,
 		Status:             models.SessionStatusActive,
-		LocalPort:          endpoint.Port,
+		LocalPort:          localPort,
 		RemotePort:         endpoint.Port,
 		RemoteHost:         remoteHost,
 		DeliveryMode:       deliveryMode,
