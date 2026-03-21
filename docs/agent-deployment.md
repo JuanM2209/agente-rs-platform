@@ -69,6 +69,8 @@ That file must be mounted into the container as read-only.
 - optional: `INVENTORY_SCAN_INTERVAL`
 - optional: `HEARTBEAT_INTERVAL`
 - optional: `MAX_CONCURRENT_SESSIONS`
+- optional: `LOCAL_IP_OVERRIDE`
+- optional: `PREFERRED_LAN_INTERFACE`
 
 ### Important runtime notes
 
@@ -193,6 +195,22 @@ That installer also disables Docker Content Trust during the local build path, b
 curl -fsSL https://raw.githubusercontent.com/JuanM2209/agente-rs-platform/main/scripts/install-remote-s-nucleus.sh -o install-remote-s-nucleus.sh
 chmod +x install-remote-s-nucleus.sh
 sudo env CONTROL_PLANE_URL='wss://api.datadesng.com/ws/agent' AGENT_SECRET='YOUR_AGENT_SECRET' TENANT_ID='test-org' CONTAINER_NAME='Remote-S' SERIAL_DEVICE='/dev/ttymxc5' ./install-remote-s-nucleus.sh
+```
+
+The installer now defaults to the legacy prebuilt release tag:
+
+- `legacy-armv7-20260320-r2`
+
+If the Nucleus has an unusual LAN interface name or the agent still cannot infer the device IP, pass one of:
+
+```bash
+sudo env PREFERRED_LAN_INTERFACE='eth0-static' ...
+```
+
+or:
+
+```bash
+sudo env LOCAL_IP_OVERRIDE='192.168.41.1' ...
 ```
 
 Default local image name for that path is `remote-s-local`.

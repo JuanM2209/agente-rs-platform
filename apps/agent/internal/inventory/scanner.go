@@ -5,8 +5,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,19 +28,19 @@ const (
 
 // Endpoint represents a single discovered network service or bridge interface.
 type Endpoint struct {
-	Port        int          `json:"port,omitempty"`
-	Protocol    string       `json:"protocol,omitempty"`
-	Type        EndpointType `json:"type"`
-	Label       string       `json:"label"`
-	SerialPort  string       `json:"serial_port,omitempty"`
+	Port       int          `json:"port,omitempty"`
+	Protocol   string       `json:"protocol,omitempty"`
+	Type       EndpointType `json:"type"`
+	Label      string       `json:"label"`
+	SerialPort string       `json:"serial_port,omitempty"`
 }
 
 // Inventory is the full snapshot of what is running on the device.
 type Inventory struct {
 	Endpoints    []Endpoint `json:"endpoints"`
-	Capabilities []string  `json:"capabilities"`
-	LocalIP      string    `json:"local_ip,omitempty"`
-	ScannedAt    time.Time `json:"scanned_at"`
+	Capabilities []string   `json:"capabilities"`
+	LocalIP      string     `json:"local_ip,omitempty"`
+	ScannedAt    time.Time  `json:"scanned_at"`
 }
 
 // wellKnownPorts maps port numbers to (type, label) pairs.
@@ -56,8 +58,11 @@ var wellKnownPorts = map[int][2]string{
 
 // Scanner periodically scans the device for open ports and serial interfaces.
 type Scanner struct {
-	interval time.Duration
-	log      zerolog.Logger
+	interval              time.Duration
+	controlPlaneURL       string
+	localIPOverride       string
+	preferredLANInterface string
+	log                   zerolog.Logger
 
 	mu      sync.RWMutex
 	current *Inventory
@@ -66,11 +71,14 @@ type Scanner struct {
 }
 
 // NewScanner creates a Scanner with the given scan interval.
-func NewScanner(interval time.Duration, log zerolog.Logger) *Scanner {
+func NewScanner(interval time.Duration, controlPlaneURL, localIPOverride, preferredLANInterface string, log zerolog.Logger) *Scanner {
 	return &Scanner{
-		interval: interval,
-		log:      log,
-		stopCh:   make(chan struct{}),
+		interval:              interval,
+		controlPlaneURL:       strings.TrimSpace(controlPlaneURL),
+		localIPOverride:       strings.TrimSpace(localIPOverride),
+		preferredLANInterface: strings.TrimSpace(preferredLANInterface),
+		log:                   log,
+		stopCh:                make(chan struct{}),
 	}
 }
 
@@ -128,16 +136,23 @@ func (s *Scanner) scan() {
 	}
 
 	inv := buildInventory(ports, serialPorts)
-	inv.LocalIP = LocalIP()
+	inv.LocalIP = LocalIP(s.controlPlaneURL, s.localIPOverride, s.preferredLANInterface)
 	inv.ScannedAt = time.Now().UTC()
 
 	s.mu.Lock()
+	previous := s.current
 	s.current = inv
 	s.mu.Unlock()
 
-	s.log.Info().
+	logger := s.log.Debug()
+	if inventoryChanged(previous, inv) {
+		logger = s.log.Info()
+	}
+
+	logger.
 		Int("endpoints", len(inv.Endpoints)).
 		Strs("capabilities", inv.Capabilities).
+		Str("local_ip", inv.LocalIP).
 		Msg("inventory scan complete")
 }
 
@@ -161,6 +176,7 @@ func openTCPPorts() ([]int, error) {
 	for p := range portSet {
 		result = append(result, p)
 	}
+	sort.Ints(result)
 	return result, nil
 }
 
@@ -265,6 +281,7 @@ func buildInventory(ports []int, serialPorts []string) *Inventory {
 	for cap := range capSet {
 		capabilities = append(capabilities, cap)
 	}
+	sort.Strings(capabilities)
 
 	return &Inventory{
 		Endpoints:    endpoints,
@@ -281,8 +298,60 @@ func hasPort(ports []int, target int) bool {
 	return false
 }
 
-// LocalIP returns the primary non-loopback IPv4 address, used for diagnostics.
-func LocalIP() string {
+func inventoryChanged(previous, current *Inventory) bool {
+	if previous == nil || current == nil {
+		return true
+	}
+	if previous.LocalIP != current.LocalIP {
+		return true
+	}
+	if len(previous.Endpoints) != len(current.Endpoints) || len(previous.Capabilities) != len(current.Capabilities) {
+		return true
+	}
+	for i := range previous.Capabilities {
+		if previous.Capabilities[i] != current.Capabilities[i] {
+			return true
+		}
+	}
+	for i := range previous.Endpoints {
+		if previous.Endpoints[i] != current.Endpoints[i] {
+			return true
+		}
+	}
+	return false
+}
+
+// LocalIP returns the best LAN-facing IPv4 address for the Nucleus. It prefers:
+// 1. explicit override, 2. an interface chosen by routing to the control plane,
+// 3. the default route interface, 4. scored interface enumeration.
+func LocalIP(controlPlaneURL, override, preferredInterface string) string {
+	if trimmed := strings.TrimSpace(override); trimmed != "" {
+		return trimmed
+	}
+
+	if preferred := strings.TrimSpace(preferredInterface); preferred != "" {
+		if ip := interfaceIPv4(preferred); ip != "" {
+			return ip
+		}
+	}
+
+	if ip := localIPViaDial(controlPlaneURL); ip != "" {
+		return ip
+	}
+
+	if defaultIface := defaultRouteInterface(); defaultIface != "" {
+		if ip := interfaceIPv4(defaultIface); ip != "" {
+			return ip
+		}
+	}
+
+	type candidate struct {
+		name  string
+		ip    string
+		score int
+	}
+
+	var best candidate
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return ""
@@ -303,12 +372,169 @@ func LocalIP() string {
 			case *net.IPAddr:
 				ip = v.IP
 			}
-			if ip != nil && ip.To4() != nil {
-				return ip.String()
+			ipv4 := ip.To4()
+			if ipv4 == nil {
+				continue
+			}
+
+			score := scoreInterfaceAddress(iface.Name, ipv4, preferredInterface)
+			if score > best.score {
+				best = candidate{
+					name:  iface.Name,
+					ip:    ipv4.String(),
+					score: score,
+				}
 			}
 		}
 	}
+	return best.ip
+}
+
+func localIPViaDial(controlPlaneURL string) string {
+	targetHost := controlPlaneHost(controlPlaneURL)
+	if targetHost == "" {
+		targetHost = "1.1.1.1"
+	}
+
+	conn, err := net.DialTimeout("udp", net.JoinHostPort(targetHost, "443"), 2*time.Second)
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+
+	if addr, ok := conn.LocalAddr().(*net.UDPAddr); ok && addr.IP != nil {
+		if ipv4 := addr.IP.To4(); ipv4 != nil {
+			return ipv4.String()
+		}
+	}
 	return ""
+}
+
+func controlPlaneHost(rawURL string) string {
+	if strings.TrimSpace(rawURL) == "" {
+		return ""
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return parsed.Hostname()
+}
+
+func defaultRouteInterface() string {
+	f, err := os.Open("/proc/net/route")
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	if !scanner.Scan() {
+		return ""
+	}
+
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 4 {
+			continue
+		}
+		if fields[1] == "00000000" && fields[3] != "0000" {
+			return fields[0]
+		}
+	}
+	return ""
+}
+
+func interfaceIPv4(name string) string {
+	iface, err := net.InterfaceByName(name)
+	if err != nil {
+		return ""
+	}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return ""
+	}
+	for _, addr := range addrs {
+		var ip net.IP
+		switch v := addr.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		if ip == nil {
+			continue
+		}
+		if ipv4 := ip.To4(); ipv4 != nil && !ipv4.IsLoopback() {
+			return ipv4.String()
+		}
+	}
+	return ""
+}
+
+func scoreInterfaceAddress(name string, ip net.IP, preferredInterface string) int {
+	score := 0
+	ipv4 := ip.To4()
+	if ipv4 == nil {
+		return score
+	}
+
+	if strings.EqualFold(name, preferredInterface) {
+		score += 100
+	}
+	if isPreferredLANInterfaceName(name) {
+		score += 35
+	}
+	if isVirtualInterfaceName(name) {
+		score -= 80
+	}
+	if isRFC1918(ipv4) {
+		score += 60
+	}
+	if ipv4.IsGlobalUnicast() {
+		score += 10
+	}
+	if ipv4[0] == 169 && ipv4[1] == 254 {
+		score -= 40
+	}
+	return score
+}
+
+func isPreferredLANInterfaceName(name string) bool {
+	lower := strings.ToLower(name)
+	for _, prefix := range []string{"eth", "en", "wlan", "wl", "usb", "ppp"} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func isVirtualInterfaceName(name string) bool {
+	lower := strings.ToLower(name)
+	for _, prefix := range []string{"docker", "br-", "veth", "cni", "flannel", "tailscale", "zt", "tun"} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func isRFC1918(ip net.IP) bool {
+	ipv4 := ip.To4()
+	if ipv4 == nil {
+		return false
+	}
+	switch {
+	case ipv4[0] == 10:
+		return true
+	case ipv4[0] == 172 && ipv4[1] >= 16 && ipv4[1] <= 31:
+		return true
+	case ipv4[0] == 192 && ipv4[1] == 168:
+		return true
+	default:
+		return false
+	}
 }
 
 // portFromHex converts a hexadecimal string to an integer port number.

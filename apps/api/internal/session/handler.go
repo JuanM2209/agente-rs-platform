@@ -139,6 +139,14 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	expiresAt := now.Add(time.Duration(req.TTLSeconds) * time.Second)
 	remoteHost := strings.TrimSpace(device.IPAddress)
+	if deliveryMode == models.DeliveryModeWeb && remoteHost == "" {
+		writeJSON(w, http.StatusConflict, models.APIResponse{
+			Success: false,
+			Error:   "device LAN IP is not available yet for browser-open. The service is still reachable through Export to Your Laptop.",
+		})
+		return
+	}
+
 	telemetry := &models.SessionTelemetry{
 		ConnectionStatus: "pending",
 		ProbeSource:      "helper",
@@ -196,10 +204,11 @@ func (h *Handler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	payloadData, _ := json.Marshal(ws.StartSessionPayload{
-		SessionID: sessionID,
-		Port:      endpoint.Port,
-		Protocol:  endpoint.Protocol,
-		TTL:       req.TTLSeconds,
+		SessionID:  sessionID,
+		TargetPort: endpoint.Port,
+		Protocol:   endpoint.Protocol,
+		TTLSeconds: req.TTLSeconds,
+		ListenPort: localPort,
 	})
 
 	cmd := ws.AgentMessage{
@@ -449,7 +458,7 @@ func (h *Handler) ListActiveSessions(w http.ResponseWriter, r *http.Request) {
 		SELECT s.id, s.device_id, s.endpoint_id, s.user_id, s.tenant_id, s.status,
 		       s.local_port, s.remote_port, s.delivery_mode, s.ttl_seconds,
 		       s.idle_timeout_seconds, s.started_at, s.expires_at, s.last_activity_at,
-		       s.stopped_at, s.stop_reason, s.tunnel_url, s.audit_data,
+		       s.stopped_at, COALESCE(s.stop_reason, ''), COALESCE(s.tunnel_url, ''), s.audit_data,
 		       d.id, d.tenant_id, COALESCE(d.site_id::text, ''), d.device_id, d.display_name, d.status,
 		       d.last_seen, COALESCE(d.firmware_version, ''), COALESCE(d.ip_address::text, ''), d.created_at,
 		       e.id, e.device_id, e.type, e.port, e.label, e.protocol, e.enabled

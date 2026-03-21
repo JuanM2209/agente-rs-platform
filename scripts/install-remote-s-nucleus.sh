@@ -9,7 +9,7 @@ ARCHIVE_PATH="${ARCHIVE_PATH:-/tmp/agente-rs-platform-main.tar.gz}"
 ARCHIVE_URL="${ARCHIVE_URL:-https://github.com/JuanM2209/agente-rs-platform/archive/refs/heads/${GIT_REF}.tar.gz}"
 IMAGE_NAME="${IMAGE_NAME:-remote-s-local}"
 PREBUILT_IMAGE_NAME="${PREBUILT_IMAGE_NAME:-remote-s-prebuilt:armv7}"
-PREBUILT_TAG="${PREBUILT_TAG:-legacy-armv7-20260320}"
+PREBUILT_TAG="${PREBUILT_TAG:-legacy-armv7-20260320-r2}"
 PREBUILT_ASSET="${PREBUILT_ASSET:-remote-s-armv7-image.tar.gz}"
 PREBUILT_TAR_URL="${PREBUILT_TAR_URL:-https://github.com/JuanM2209/agente-rs-platform/releases/download/${PREBUILT_TAG}/${PREBUILT_ASSET}}"
 CONTAINER_NAME="${CONTAINER_NAME:-Remote-S}"
@@ -20,6 +20,8 @@ TENANT_ID="${TENANT_ID:-test-org}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
 HEARTBEAT_INTERVAL="${HEARTBEAT_INTERVAL:-30s}"
 INVENTORY_SCAN_INTERVAL="${INVENTORY_SCAN_INTERVAL:-60s}"
+LOCAL_IP_OVERRIDE="${LOCAL_IP_OVERRIDE:-}"
+PREFERRED_LAN_INTERFACE="${PREFERRED_LAN_INTERFACE:-}"
 SERIAL_DEVICE="${SERIAL_DEVICE:-/dev/ttymxc5}"
 MBUSD_HOST_PATH="${MBUSD_HOST_PATH:-}"
 KEEP_SOURCE="${KEEP_SOURCE:-false}"
@@ -162,6 +164,14 @@ args=(
   -e "HEARTBEAT_INTERVAL=${HEARTBEAT_INTERVAL}"
   -e "INVENTORY_SCAN_INTERVAL=${INVENTORY_SCAN_INTERVAL}"
 )
+
+if [[ -n "${LOCAL_IP_OVERRIDE}" ]]; then
+  args+=(-e "LOCAL_IP_OVERRIDE=${LOCAL_IP_OVERRIDE}")
+fi
+
+if [[ -n "${PREFERRED_LAN_INTERFACE}" ]]; then
+  args+=(-e "PREFERRED_LAN_INTERFACE=${PREFERRED_LAN_INTERFACE}")
+fi
 
 if [[ -n "${SERIAL_DEVICE}" && -e "${SERIAL_DEVICE}" ]]; then
   args+=(--device "${SERIAL_DEVICE}:${SERIAL_DEVICE}")

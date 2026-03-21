@@ -16,7 +16,7 @@ import (
 	"github.com/nucleus-portal/agent/internal/ws"
 )
 
-const agentVersion = "1.0.0"
+const agentVersion = "1.0.1"
 
 // SessionState tracks a live port-forward session managed by the agent.
 type SessionState struct {
@@ -191,7 +191,7 @@ func (a *Agent) handleCommand(msg ws.AgentMessage) {
 
 // handleSyncInventory triggers a fresh inventory scan and pushes the result.
 func (a *Agent) handleSyncInventory() error {
-	a.log.Info().Msg("sync_inventory requested")
+	a.log.Debug().Msg("sync_inventory requested")
 	return a.sendInventoryUpdate()
 }
 

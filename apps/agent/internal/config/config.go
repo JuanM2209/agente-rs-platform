@@ -17,6 +17,8 @@ type Config struct {
 	DeviceIDSource        string
 	DeviceIDFile          string
 	ControlPlaneURL       string
+	LocalIPOverride       string
+	PreferredLANInterface string
 	AgentSecret           string
 	TenantID              string
 	InventoryScanInterval time.Duration
@@ -56,6 +58,8 @@ func Load(envFile string) (*Config, error) {
 	if cfg.ControlPlaneURL == "" {
 		cfg.ControlPlaneURL = "wss://api.nucleus.example.com/ws/agent"
 	}
+	cfg.LocalIPOverride = strings.TrimSpace(os.Getenv("LOCAL_IP_OVERRIDE"))
+	cfg.PreferredLANInterface = strings.TrimSpace(os.Getenv("PREFERRED_LAN_INTERFACE"))
 
 	cfg.AgentSecret = os.Getenv("AGENT_SECRET")
 	if cfg.AgentSecret == "" {

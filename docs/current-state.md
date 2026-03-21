@@ -130,6 +130,21 @@ That installer:
 - falls back to a prebuilt ARMv7 image from GitHub Releases if the local build fails on the target Docker engine
 - starts the container as `Remote-S` by default
 
+Current legacy release default:
+
+- `legacy-armv7-20260320-r2`
+
+Current agent runtime version:
+
+- `1.0.1`
+
+### Localhost vs LAN IP behavior
+
+- Ports such as `1880`, `9090`, and `22` can absolutely be localhost listeners on the Nucleus itself
+- `Export to Your Laptop` works against those localhost services because it is session-based and does not require the customer browser to reach the Nucleus directly
+- `Open Web Port` still requires a usable Nucleus LAN IP in the current design, because it opens a browser target directly instead of reverse-proxying through the portal
+- The portal UI now labels these as localhost services on the Nucleus instead of implying that the service itself is pending
+
 ## Export Session Telemetry
 
 This iteration introduces first-pass telemetry for exported TCP sessions.

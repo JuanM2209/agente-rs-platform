@@ -123,7 +123,7 @@ function EndpointListRow({
         <div className="rounded-xl bg-surface-container-low px-3 py-2">
           <p className="text-[10px] uppercase tracking-[0.18em] text-outline">Remote Endpoint</p>
           <p className="mt-1 font-technical text-sm text-on-surface">
-            {deviceIP || "Pending IP"}:{endpoint.port}
+            {deviceIP || "localhost on Nucleus"}:{endpoint.port}
           </p>
         </div>
         <div className="rounded-xl bg-surface-container-low px-3 py-2">
@@ -146,7 +146,7 @@ function EndpointListRow({
           ) : (
             <div className="inline-flex min-w-[176px] items-center justify-center gap-2 rounded-xl border border-outline-variant/10 bg-surface-container-low px-4 py-3 text-sm font-semibold text-outline">
               <span className="material-symbols-outlined text-base">schedule</span>
-              Awaiting Device IP
+              Browser Open Needs LAN IP
             </div>
           )
         )}
@@ -225,7 +225,7 @@ export default function DeviceDetailPage() {
 
   const handleOpenWebPort = async (endpoint: Endpoint) => {
     if (!inventory?.device.ip_address) {
-      window.alert("This device is online, but its Nucleus IP has not been reported yet. Refresh inventory after updating the Remote-S agent image, or use Export to Your Laptop for now.");
+      window.alert("This service was discovered locally on the Nucleus, but browser-open still needs the Nucleus LAN IP. Use Export to Your Laptop for now, or update Remote-S so it reports the LAN IP.");
       return;
     }
 
@@ -358,10 +358,10 @@ export default function DeviceDetailPage() {
   const { device, endpoints, capabilities, freshness } = inventory;
   const allEndpointCount = endpoints.web.length + endpoints.program.length + endpoints.bridge.length;
   const canOpenWebPorts = Boolean(device.ip_address);
-  const ipStatusLabel = device.ip_address || "Awaiting device IP";
+  const ipStatusLabel = device.ip_address || "Localhost service only";
   const ipStatusHelp = device.ip_address
     ? `Last inventory scan: ${new Date(freshness.last_scan).toLocaleString()}`
-    : "Remote-S is connected, but this Nucleus has not reported its LAN IP yet. Web-open needs that IP. Laptop export still works now.";
+    : "Remote-S discovered services that are listening locally on the Nucleus. Export-to-laptop works now. Browser-open still needs the Nucleus LAN IP or a future reverse-proxy flow.";
 
   return (
     <div className="mx-auto max-w-7xl px-6 py-8">
@@ -420,7 +420,7 @@ export default function DeviceDetailPage() {
 
       {!device.ip_address && (
         <div className="mb-8 rounded-2xl border border-primary/20 bg-primary/10 px-5 py-4 text-sm text-on-surface">
-          Web ports are waiting on the device IP from the external Remote-S agent. `Export to Your Laptop` is available now. Once the updated agent reports the Nucleus IP, `Open Web Port` becomes a true one-click action.
+          These web ports were discovered locally on the Nucleus itself, but the portal still needs the device LAN IP to open them directly in your browser. `Export to Your Laptop` works now, and `Open Web Port` becomes a real one-click action as soon as Remote-S reports that LAN IP.
         </div>
       )}
 
@@ -485,7 +485,7 @@ export default function DeviceDetailPage() {
               Map this remote device port into your laptop helper and choose the localhost port you want to use.
             </p>
             <div className="mt-6 grid gap-4 rounded-2xl bg-surface-container-high p-5 md:grid-cols-2">
-              <div><p className="text-[10px] uppercase tracking-[0.18em] text-outline">Remote Port</p><p className="mt-1 font-technical text-xl text-on-surface">{device.ip_address || "Pending"}:{sessionModal.endpoint.port}</p></div>
+              <div><p className="text-[10px] uppercase tracking-[0.18em] text-outline">Remote Port</p><p className="mt-1 font-technical text-xl text-on-surface">{device.ip_address || "Nucleus localhost"}:{sessionModal.endpoint.port}</p></div>
               <div><p className="text-[10px] uppercase tracking-[0.18em] text-outline">Session Window</p><p className="mt-1 font-technical text-xl text-on-surface">{sessionModal.ttlHours}h</p></div>
             </div>
             <div className="mt-5">

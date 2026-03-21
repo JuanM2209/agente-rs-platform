@@ -67,10 +67,11 @@ type InventoryPayload struct {
 
 // StartSessionPayload carries the parameters needed to open a remote session.
 type StartSessionPayload struct {
-	SessionID string `json:"session_id"`
-	Port      int    `json:"port"`
-	Protocol  string `json:"protocol"`
-	TTL       int    `json:"ttl_seconds"`
+	SessionID  string `json:"session_id"`
+	TargetPort int    `json:"target_port"`
+	Protocol   string `json:"protocol"`
+	TTLSeconds int    `json:"ttl_seconds"`
+	ListenPort int    `json:"listen_port,omitempty"`
 }
 
 // StopSessionPayload identifies the session to be terminated.

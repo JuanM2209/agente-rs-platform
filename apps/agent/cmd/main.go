@@ -61,6 +61,9 @@ func run() error {
 	// -------------------------------------------------------------------------
 	scanner := inventory.NewScanner(
 		cfg.InventoryScanInterval,
+		cfg.ControlPlaneURL,
+		cfg.LocalIPOverride,
+		cfg.PreferredLANInterface,
 		logger.With().Str("component", "inventory").Logger(),
 	)
 
