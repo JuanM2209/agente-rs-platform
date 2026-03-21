@@ -34,7 +34,6 @@ const fallbackModbusSerialPort = "/dev/ttymxc5";
 
 type SessionModalState = {
   endpoint: Endpoint;
-  mode: "web" | "export";
   localPort: number;
   ttlHours: number;
 };
@@ -87,11 +86,15 @@ function SectionHeader({
 function EndpointListRow({
   endpoint,
   deviceIP,
+  canOpenWeb,
+  openingWeb,
   onOpenWeb,
   onExport,
 }: {
   endpoint: Endpoint;
   deviceIP?: string;
+  canOpenWeb: boolean;
+  openingWeb: boolean;
   onOpenWeb: (endpoint: Endpoint) => void;
   onExport: (endpoint: Endpoint) => void;
 }) {
@@ -131,13 +134,21 @@ function EndpointListRow({
 
       <div className="flex flex-col gap-2 sm:flex-row lg:flex-col lg:items-end">
         {endpoint.type === "WEB" && (
-          <button
-            onClick={() => onOpenWeb(endpoint)}
-            className="inline-flex min-w-[176px] items-center justify-center gap-2 rounded-xl bg-primary/10 px-4 py-3 text-sm font-semibold text-primary transition-colors hover:bg-primary/20"
-          >
-            <span className="material-symbols-outlined text-base">open_in_new</span>
-            Open Web Port
-          </button>
+          canOpenWeb ? (
+            <button
+              onClick={() => onOpenWeb(endpoint)}
+              disabled={openingWeb}
+              className="inline-flex min-w-[176px] items-center justify-center gap-2 rounded-xl bg-primary/10 px-4 py-3 text-sm font-semibold text-primary transition-colors hover:bg-primary/20"
+            >
+              <span className={clsx("material-symbols-outlined text-base", openingWeb && "animate-spin")}>{openingWeb ? "progress_activity" : "open_in_new"}</span>
+              {openingWeb ? "Opening..." : "Open Web Port"}
+            </button>
+          ) : (
+            <div className="inline-flex min-w-[176px] items-center justify-center gap-2 rounded-xl border border-outline-variant/10 bg-surface-container-low px-4 py-3 text-sm font-semibold text-outline">
+              <span className="material-symbols-outlined text-base">schedule</span>
+              Awaiting Device IP
+            </div>
+          )
         )}
         <button
           onClick={() => onExport(endpoint)}
@@ -161,6 +172,7 @@ export default function DeviceDetailPage() {
   const [scanning, setScanning] = useState(false);
   const [defaultSessionHours, setDefaultSessionHours] = useState(8);
   const [sessionModal, setSessionModal] = useState<SessionModalState | null>(null);
+  const [creatingWebSessionFor, setCreatingWebSessionFor] = useState<string | null>(null);
   const [bridgeModal, setBridgeModal] = useState(false);
   const [creatingBridge, setCreatingBridge] = useState(false);
   const [bridgeError, setBridgeError] = useState("");
@@ -203,13 +215,39 @@ export default function DeviceDetailPage() {
     }
   };
 
-  const openSessionModal = (endpoint: Endpoint, mode: "web" | "export") => {
+  const openExportModal = (endpoint: Endpoint) => {
     setSessionModal({
       endpoint,
-      mode,
       localPort: endpoint.port,
       ttlHours: getPortalPreferences().defaultSessionHours,
     });
+  };
+
+  const handleOpenWebPort = async (endpoint: Endpoint) => {
+    if (!inventory?.device.ip_address) {
+      window.alert("This device is online, but its Nucleus IP has not been reported yet. Refresh inventory after updating the Remote-S agent image, or use Export to Your Laptop for now.");
+      return;
+    }
+
+    setCreatingWebSessionFor(endpoint.id);
+    try {
+      const session = await createSession(deviceId, {
+        endpoint_id: endpoint.id,
+        delivery_mode: "web",
+        ttl_seconds: sessionHoursToSeconds(getPortalPreferences().defaultSessionHours),
+      });
+
+      if (!session.tunnel_url) {
+        throw new Error("This web port still needs a device IP or tunnel target. Refresh inventory and try again.");
+      }
+
+      window.open(session.tunnel_url, "_blank", "noopener,noreferrer");
+      router.push("/sessions");
+    } catch (err: unknown) {
+      window.alert(err instanceof Error ? err.message : "Failed to open the web port.");
+    } finally {
+      setCreatingWebSessionFor(null);
+    }
   };
 
   const handleCreateSession = async () => {
@@ -217,19 +255,13 @@ export default function DeviceDetailPage() {
 
     const req: CreateSessionRequest = {
       endpoint_id: sessionModal.endpoint.id,
-      delivery_mode: sessionModal.mode,
+      delivery_mode: "export",
       ttl_seconds: sessionHoursToSeconds(sessionModal.ttlHours),
-      ...(sessionModal.mode === "export" ? { local_port: sessionModal.localPort } : {}),
+      local_port: sessionModal.localPort,
     };
 
     try {
       const session = await createSession(deviceId, req);
-      if (sessionModal.mode === "web") {
-        if (!session.tunnel_url) {
-          throw new Error("This web port still needs a device IP or tunnel target. Refresh inventory and try again.");
-        }
-        window.open(session.tunnel_url, "_blank", "noopener,noreferrer");
-      }
       setSessionModal(null);
       router.push("/sessions");
     } catch (err: unknown) {
@@ -325,6 +357,11 @@ export default function DeviceDetailPage() {
 
   const { device, endpoints, capabilities, freshness } = inventory;
   const allEndpointCount = endpoints.web.length + endpoints.program.length + endpoints.bridge.length;
+  const canOpenWebPorts = Boolean(device.ip_address);
+  const ipStatusLabel = device.ip_address || "Awaiting device IP";
+  const ipStatusHelp = device.ip_address
+    ? `Last inventory scan: ${new Date(freshness.last_scan).toLocaleString()}`
+    : "Remote-S is connected, but this Nucleus has not reported its LAN IP yet. Web-open needs that IP. Laptop export still works now.";
 
   return (
     <div className="mx-auto max-w-7xl px-6 py-8">
@@ -370,8 +407,8 @@ export default function DeviceDetailPage() {
         </div>
         <div className="rounded-2xl border border-outline-variant/10 bg-surface-container-high p-5">
           <p className="text-[11px] uppercase tracking-[0.18em] text-outline">Current Device IP</p>
-          <p className="mt-2 font-technical text-2xl text-on-surface">{device.ip_address || "Pending scan"}</p>
-          <p className="mt-2 text-xs text-on-surface-variant">Last inventory scan: {new Date(freshness.last_scan).toLocaleString()}</p>
+          <p className={clsx("mt-2 font-technical text-2xl", device.ip_address ? "text-on-surface" : "text-amber-200")}>{ipStatusLabel}</p>
+          <p className="mt-2 text-xs text-on-surface-variant">{ipStatusHelp}</p>
         </div>
       </div>
 
@@ -381,12 +418,18 @@ export default function DeviceDetailPage() {
         </div>
       )}
 
+      {!device.ip_address && (
+        <div className="mb-8 rounded-2xl border border-primary/20 bg-primary/10 px-5 py-4 text-sm text-on-surface">
+          Web ports are waiting on the device IP from the external Remote-S agent. `Export to Your Laptop` is available now. Once the updated agent reports the Nucleus IP, `Open Web Port` becomes a true one-click action.
+        </div>
+      )}
+
       <div className="space-y-8">
         <section className="space-y-4">
           <SectionHeader title="Web Ports" caption="Browser-friendly services that can open directly in a new tab or be exported to your laptop." count={endpoints.web.length} />
           <div className="space-y-3">
             {endpoints.web.length > 0 ? endpoints.web.map((endpoint) => (
-              <EndpointListRow key={endpoint.id} endpoint={endpoint} deviceIP={device.ip_address} onOpenWeb={(ep) => openSessionModal(ep, "web")} onExport={(ep) => openSessionModal(ep, "export")} />
+              <EndpointListRow key={endpoint.id} endpoint={endpoint} deviceIP={device.ip_address} canOpenWeb={canOpenWebPorts} openingWeb={creatingWebSessionFor === endpoint.id} onOpenWeb={handleOpenWebPort} onExport={openExportModal} />
             )) : <div className="rounded-2xl border border-dashed border-outline-variant/20 bg-surface-container-low px-5 py-8 text-sm text-on-surface-variant">No browser-ready services are currently available on this device.</div>}
           </div>
         </section>
@@ -395,7 +438,7 @@ export default function DeviceDetailPage() {
           <SectionHeader title="Program Ports" caption="Industrial protocols and engineering ports that are typically exported into a local laptop tool." count={endpoints.program.length} />
           <div className="space-y-3">
             {endpoints.program.length > 0 ? endpoints.program.map((endpoint) => (
-              <EndpointListRow key={endpoint.id} endpoint={endpoint} deviceIP={device.ip_address} onOpenWeb={(ep) => openSessionModal(ep, "web")} onExport={(ep) => openSessionModal(ep, "export")} />
+              <EndpointListRow key={endpoint.id} endpoint={endpoint} deviceIP={device.ip_address} canOpenWeb={false} openingWeb={false} onOpenWeb={handleOpenWebPort} onExport={openExportModal} />
             )) : <div className="rounded-2xl border border-dashed border-outline-variant/20 bg-surface-container-low px-5 py-8 text-sm text-on-surface-variant">No program ports were discovered in the latest scan.</div>}
           </div>
         </section>
@@ -437,33 +480,29 @@ export default function DeviceDetailPage() {
       {sessionModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
           <div className="w-full max-w-xl rounded-3xl border border-outline-variant/10 bg-surface-bright p-8 surface-shadow">
-            <h3 className="font-headline text-3xl font-bold text-on-surface">{sessionModal.mode === "web" ? "Open Web Port" : "Export to Your Laptop"}</h3>
+            <h3 className="font-headline text-3xl font-bold text-on-surface">Export to Your Laptop</h3>
             <p className="mt-3 text-sm text-on-surface-variant">
-              {sessionModal.mode === "web"
-                ? "Launch a browser session for this device service. The session remains active for the configured default window."
-                : "Map this remote device port into your laptop helper and choose the localhost port you want to use."}
+              Map this remote device port into your laptop helper and choose the localhost port you want to use.
             </p>
             <div className="mt-6 grid gap-4 rounded-2xl bg-surface-container-high p-5 md:grid-cols-2">
               <div><p className="text-[10px] uppercase tracking-[0.18em] text-outline">Remote Port</p><p className="mt-1 font-technical text-xl text-on-surface">{device.ip_address || "Pending"}:{sessionModal.endpoint.port}</p></div>
               <div><p className="text-[10px] uppercase tracking-[0.18em] text-outline">Session Window</p><p className="mt-1 font-technical text-xl text-on-surface">{sessionModal.ttlHours}h</p></div>
             </div>
-            {sessionModal.mode === "export" && (
-              <div className="mt-5">
-                <label className="mb-2 block text-sm text-on-surface-variant">Laptop localhost port</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={65535}
-                  value={sessionModal.localPort}
-                  onChange={(e) => setSessionModal((current) => current ? { ...current, localPort: Number(e.target.value) || current.endpoint.port } : current)}
-                  className="w-full rounded-xl border border-outline-variant/10 bg-surface-container-high px-4 py-3 text-sm text-on-surface outline-none focus:border-primary"
-                />
-                <p className="mt-2 text-xs text-on-surface-variant">Example: export device port {sessionModal.endpoint.port} to <span className="font-technical">127.0.0.1:1889</span> if your tool expects a custom local port.</p>
-              </div>
-            )}
+            <div className="mt-5">
+              <label className="mb-2 block text-sm text-on-surface-variant">Laptop localhost port</label>
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                value={sessionModal.localPort}
+                onChange={(e) => setSessionModal((current) => current ? { ...current, localPort: Number(e.target.value) || current.endpoint.port } : current)}
+                className="w-full rounded-xl border border-outline-variant/10 bg-surface-container-high px-4 py-3 text-sm text-on-surface outline-none focus:border-primary"
+              />
+              <p className="mt-2 text-xs text-on-surface-variant">Example: export device port {sessionModal.endpoint.port} to <span className="font-technical">127.0.0.1:1889</span> if your tool expects a custom local port.</p>
+            </div>
             <div className="mt-8 flex gap-3">
               <button onClick={() => setSessionModal(null)} className="flex-1 rounded-xl px-4 py-3 text-sm font-semibold text-on-surface-variant transition-colors hover:bg-surface-container-high">Cancel</button>
-              <button onClick={handleCreateSession} className="flex-1 rounded-xl gradient-primary px-4 py-3 text-sm font-bold text-on-primary">{sessionModal.mode === "web" ? "Open Web Port" : "Export Port"}</button>
+              <button onClick={handleCreateSession} className="flex-1 rounded-xl gradient-primary px-4 py-3 text-sm font-bold text-on-primary">Export Port</button>
             </div>
           </div>
         </div>
