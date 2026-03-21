@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
@@ -21,26 +22,10 @@ import (
 func buildRouter(cfg *config.Config, hub *ws.AgentHub) http.Handler {
 	r := chi.NewRouter()
 
-	// ── Global middleware ──────────────────────────────────────────────────────
 	r.Use(chiMiddleware.Recoverer)
 	r.Use(appMiddleware.RequestID)
 	r.Use(appMiddleware.Logger)
 
-	// CORS — tighten origins per environment in production.
-	allowedOrigins := cfg.APICORSOrigins
-	if len(allowedOrigins) == 0 {
-		allowedOrigins = []string{"http://localhost:3000", "http://localhost:3001"}
-	}
-	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   allowedOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"},
-		ExposedHeaders:   []string{"X-Request-ID"},
-		AllowCredentials: true,
-		MaxAge:           300,
-	}))
-
-	// ── Dependencies ──────────────────────────────────────────────────────────
 	db := database.GetPool()
 	redisClient := database.GetRedis()
 
@@ -53,54 +38,61 @@ func buildRouter(cfg *config.Config, hub *ws.AgentHub) http.Handler {
 	jwtAuth := auth.JWTMiddleware(cfg.JWTSecret)
 	requireAdmin := appMiddleware.RequireRole("admin")
 
-	// ── WebSocket agent endpoint ──────────────────────────────────────────────
+	// Keep WebSocket upgrades outside the CORS middleware stack so the response
+	// writer still supports http.Hijacker for agent connections.
 	r.Get("/ws/agent", agentAuthMiddleware(cfg.AgentWSSecret, hub))
 
-	// ── Health check ─────────────────────────────────────────────────────────
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"success":true,"data":{"status":"ok"}}`))
-	})
+	allowedOrigins := cfg.APICORSOrigins
+	if len(allowedOrigins) == 0 {
+		allowedOrigins = []string{"http://localhost:3000", "http://localhost:3001"}
+	}
 
-	// ── API v1 ────────────────────────────────────────────────────────────────
-	r.Route("/api/v1", func(r chi.Router) {
+	r.Group(func(r chi.Router) {
+		r.Use(cors.Handler(cors.Options{
+			AllowedOrigins:   allowedOrigins,
+			AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+			AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"},
+			ExposedHeaders:   []string{"X-Request-ID"},
+			AllowCredentials: true,
+			MaxAge:           300,
+		}))
 
-		// Public auth routes (no JWT required).
-		r.Post("/auth/login", authHandler.Login)
+		r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"success":true,"data":{"status":"ok"}}`))
+		})
 
-		// Authenticated routes.
-		r.Group(func(r chi.Router) {
-			r.Use(jwtAuth)
+		r.Route("/api/v1", func(r chi.Router) {
+			r.Post("/auth/login", authHandler.Login)
 
-			r.Post("/auth/logout", authHandler.Logout)
-
-			// Current user.
-			r.Get("/me", authHandler.Me)
-			r.Get("/me/active-sessions", sessionHandler.ListActiveSessions)
-			r.Get("/me/export-history", sessionHandler.ListExportHistory)
-
-			// Device routes.
-			r.Route("/devices/{deviceId}", func(r chi.Router) {
-				r.Get("/", deviceHandler.GetDevice)
-				r.Get("/inventory", deviceHandler.GetInventory)
-				r.Post("/scan", deviceHandler.ScanDevice)
-				r.Post("/sessions", sessionHandler.CreateSession)
-				r.Get("/export-history", auditHandler.GetDeviceExportHistory)
-				r.Post("/bridges/modbus-serial", bridgeHandler.StartModbusBridge)
-			})
-
-			// Session management.
-			r.Delete("/sessions/{sessionId}", sessionHandler.StopSession)
-			r.Post("/sessions/{sessionId}/telemetry", sessionHandler.UpdateSessionTelemetry)
-
-			// Bridge management.
-			r.Delete("/bridges/{bridgeId}", bridgeHandler.StopBridge)
-
-			// Admin-only routes.
 			r.Group(func(r chi.Router) {
-				r.Use(requireAdmin)
-				r.Get("/admin/devices", deviceHandler.ListDevices)
+				r.Use(jwtAuth)
+
+				r.Post("/auth/logout", authHandler.Logout)
+
+				r.Get("/me", authHandler.Me)
+				r.Get("/me/active-sessions", sessionHandler.ListActiveSessions)
+				r.Get("/me/export-history", sessionHandler.ListExportHistory)
+
+				r.Route("/devices/{deviceId}", func(r chi.Router) {
+					r.Get("/", deviceHandler.GetDevice)
+					r.Get("/inventory", deviceHandler.GetInventory)
+					r.Post("/scan", deviceHandler.ScanDevice)
+					r.Post("/sessions", sessionHandler.CreateSession)
+					r.Get("/export-history", auditHandler.GetDeviceExportHistory)
+					r.Post("/bridges/modbus-serial", bridgeHandler.StartModbusBridge)
+				})
+
+				r.Delete("/sessions/{sessionId}", sessionHandler.StopSession)
+				r.Post("/sessions/{sessionId}/telemetry", sessionHandler.UpdateSessionTelemetry)
+
+				r.Delete("/bridges/{bridgeId}", bridgeHandler.StopBridge)
+
+				r.Group(func(r chi.Router) {
+					r.Use(requireAdmin)
+					r.Get("/admin/devices", deviceHandler.ListDevices)
+				})
 			})
 		})
 	})
@@ -112,6 +104,12 @@ func buildRouter(cfg *config.Config, hub *ws.AgentHub) http.Handler {
 func agentAuthMiddleware(secret string, hub *ws.AgentHub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		provided := r.Header.Get("X-Agent-Secret")
+		if provided == "" {
+			authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+			if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
+				provided = strings.TrimSpace(authHeader[7:])
+			}
+		}
 		if provided == "" {
 			provided = r.URL.Query().Get("secret")
 		}

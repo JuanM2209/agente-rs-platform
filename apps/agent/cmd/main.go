@@ -51,6 +51,7 @@ func run() error {
 	header := http.Header{}
 	header.Set("X-Device-ID", cfg.DeviceID)
 	header.Set("X-Tenant-ID", cfg.TenantID)
+	header.Set("X-Agent-Secret", cfg.AgentSecret)
 	header.Set("Authorization", "Bearer "+cfg.AgentSecret)
 
 	hub := ws.NewHub(cfg.ControlPlaneURL, header, logger.With().Str("component", "hub").Logger())

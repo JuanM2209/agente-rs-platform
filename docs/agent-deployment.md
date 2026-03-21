@@ -197,6 +197,13 @@ sudo env CONTROL_PLANE_URL='wss://api.datadesng.com/ws/agent' AGENT_SECRET='YOUR
 
 Default local image name for that path is `remote-s-local`.
 
+Important for this environment:
+
+- `TENANT_ID` must be a real tenant UUID, not `test-org`
+- Alpha tenant UUID: `a1000000-0000-0000-0000-000000000001`
+- Beta tenant UUID: `b2000000-0000-0000-0000-000000000001`
+- `AGENT_SECRET` must be the real `AGENT_WS_SECRET` from the control-plane `.env`
+
 ### If the device has the Nucleus Modbus serial adapter
 
 Example with `/dev/ttymxc5`:

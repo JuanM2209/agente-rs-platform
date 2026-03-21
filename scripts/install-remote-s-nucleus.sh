@@ -41,6 +41,16 @@ if [[ -z "${AGENT_SECRET}" ]]; then
   exit 1
 fi
 
+if [[ "${AGENT_SECRET}" = "TU_SECRET_REAL" || "${AGENT_SECRET}" = "YOUR_AGENT_SECRET" || "${AGENT_SECRET}" = "replace-with-real-agent-secret" ]]; then
+  echo "[ERROR] AGENT_SECRET is still using a placeholder value. Use the real AGENT_WS_SECRET configured on the control plane." >&2
+  exit 1
+fi
+
+if [[ ! "${TENANT_ID}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+  echo "[ERROR] TENANT_ID must be a real tenant UUID. Example for Alpha in this environment: a1000000-0000-0000-0000-000000000001" >&2
+  exit 1
+fi
+
 if [[ ! -d "${FACTORY_PATH}" ]]; then
   echo "[ERROR] FACTORY_PATH does not exist: ${FACTORY_PATH}" >&2
   exit 1

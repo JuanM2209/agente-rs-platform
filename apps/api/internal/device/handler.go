@@ -65,8 +65,8 @@ func (h *Handler) GetDevice(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.GetTenantID(r.Context())
 
 	const q = `
-		SELECT id, tenant_id, site_id, device_id, display_name, status,
-		       last_seen, firmware_version, ip_address, hardware_model,
+		SELECT id, tenant_id, COALESCE(site_id::text, ''), device_id, display_name, status,
+		       last_seen, COALESCE(firmware_version, ''), COALESCE(ip_address::text, ''), COALESCE(hardware_model, ''),
 		       inventory_updated_at, created_at
 		FROM devices
 		WHERE device_id = $1 AND tenant_id = $2
@@ -287,8 +287,8 @@ func (h *Handler) ListDevices(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.GetTenantID(r.Context())
 
 	const q = `
-		SELECT id, tenant_id, site_id, device_id, display_name, status,
-		       last_seen, firmware_version, ip_address, created_at
+		SELECT id, tenant_id, COALESCE(site_id::text, ''), device_id, display_name, status,
+		       last_seen, COALESCE(firmware_version, ''), COALESCE(ip_address::text, ''), created_at
 		FROM devices
 		WHERE tenant_id = $1
 		ORDER BY display_name ASC`
@@ -356,8 +356,8 @@ func (h *Handler) resolveInternalID(ctx context.Context, deviceID, tenantID stri
 
 func (h *Handler) fetchDevice(ctx context.Context, deviceID, tenantID string) (*models.Device, error) {
 	const q = `
-		SELECT d.id, d.tenant_id, d.site_id, d.device_id, d.display_name, d.status,
-		       d.last_seen, d.firmware_version, d.ip_address, d.hardware_model,
+		SELECT d.id, d.tenant_id, COALESCE(d.site_id::text, ''), d.device_id, d.display_name, d.status,
+		       d.last_seen, COALESCE(d.firmware_version, ''), COALESCE(d.ip_address::text, ''), COALESCE(d.hardware_model, ''),
 		       d.inventory_updated_at, d.created_at,
 		       COALESCE(s.id::text, ''), COALESCE(s.tenant_id::text, ''),
 		       COALESCE(s.name, ''), COALESCE(s.location, ''), COALESCE(s.timezone, '')

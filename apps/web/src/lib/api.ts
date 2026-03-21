@@ -18,7 +18,22 @@ import type {
 
 // Empty string → relative URL → hits Next.js mock routes bundled with the frontend.
 // Set NEXT_PUBLIC_API_URL=http://localhost:8080 to use the real Go backend.
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
+function resolveAPIURL(): string {
+  const configured = process.env.NEXT_PUBLIC_API_URL?.trim();
+  if (configured) return configured;
+
+  if (typeof window !== "undefined") {
+    const { protocol, hostname } = window.location;
+    if (hostname === "portal.datadesng.com") {
+      return "https://api.datadesng.com";
+    }
+    if (hostname.endsWith(".datadesng.com") && hostname.startsWith("portal.")) {
+      return `${protocol}//${hostname.replace(/^portal\./, "api.")}`;
+    }
+  }
+
+  return "";
+}
 
 class APIError extends Error {
   constructor(
@@ -53,7 +68,8 @@ async function request<T>(
     ...options.headers,
   };
 
-  const res = await fetch(`${API_URL}${path}`, {
+  const apiURL = resolveAPIURL();
+  const res = await fetch(`${apiURL}${path}`, {
     ...options,
     headers,
   });
@@ -73,7 +89,8 @@ async function request<T>(
 // --- Auth ---
 
 export async function login(req: LoginRequest): Promise<LoginResponse> {
-  const res = await fetch(`${API_URL}/api/v1/auth/login`, {
+  const apiURL = resolveAPIURL();
+  const res = await fetch(`${apiURL}/api/v1/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),

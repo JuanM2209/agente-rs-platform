@@ -47,8 +47,8 @@ func (h *Handler) GetDeviceExportHistory(w http.ResponseWriter, r *http.Request)
 	}
 
 	const q = `
-		SELECT id, session_id, user_id, device_id, endpoint_id, tenant_id, site_id,
-		       started_at, stopped_at, stop_reason, local_bind_port, delivery_mode, metadata
+		SELECT id, COALESCE(session_id::text, ''), user_id, device_id, COALESCE(endpoint_id::text, ''), tenant_id, COALESCE(site_id::text, ''),
+		       started_at, stopped_at, COALESCE(stop_reason, ''), COALESCE(local_bind_port, 0), COALESCE(delivery_mode, ''), COALESCE(metadata, '{}'::jsonb)
 		FROM export_history
 		WHERE device_id = $1 AND tenant_id = $2
 		ORDER BY started_at DESC

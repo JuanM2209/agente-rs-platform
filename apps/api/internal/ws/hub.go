@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
 )
@@ -175,12 +176,57 @@ func (h *AgentHub) HandleAgentConnection(w http.ResponseWriter, r *http.Request)
 		hub:      h,
 	}
 
+	if err := h.ensureDeviceRecord(deviceID, tenantID); err != nil {
+		log.Warn().
+			Err(err).
+			Str("device_id", deviceID).
+			Str("tenant_id", tenantID).
+			Msg("failed to ensure device record before agent registration")
+	}
+
 	h.Register(conn)
 
 	ctx, cancel := context.WithCancel(r.Context())
 
 	go conn.writePump(cancel)
 	conn.readPump(ctx, cancel)
+}
+
+func (h *AgentHub) ensureDeviceRecord(deviceStringID, tenantID string) error {
+	if h.db == nil {
+		return nil
+	}
+
+	const lookupQ = `SELECT id FROM devices WHERE device_id = $1 LIMIT 1`
+
+	var existingID string
+	err := h.db.QueryRow(context.Background(), lookupQ, deviceStringID).Scan(&existingID)
+	if err == nil {
+		return nil
+	}
+	if err != pgx.ErrNoRows {
+		return err
+	}
+
+	const insertQ = `
+		INSERT INTO devices
+			(id, tenant_id, device_id, display_name, status, hardware_model, serial_number, created_at, updated_at, last_seen)
+		VALUES
+			($1, $2, $3, $4, 'online', 'Nucleus Remote-S', $5, NOW(), NOW(), NOW())
+		ON CONFLICT (device_id) DO NOTHING`
+
+	displayName := fmt.Sprintf("Auto-registered %s", deviceStringID)
+	_, err = h.db.Exec(
+		context.Background(),
+		insertQ,
+		uuid.New().String(),
+		tenantID,
+		deviceStringID,
+		displayName,
+		deviceStringID,
+	)
+
+	return err
 }
 
 // readPump processes inbound messages from the agent until the connection closes.

@@ -432,8 +432,8 @@ func (h *Handler) ListActiveSessions(w http.ResponseWriter, r *http.Request) {
 		       s.local_port, s.remote_port, s.delivery_mode, s.ttl_seconds,
 		       s.idle_timeout_seconds, s.started_at, s.expires_at, s.last_activity_at,
 		       s.stopped_at, s.stop_reason, s.tunnel_url, s.audit_data,
-		       d.id, d.tenant_id, d.site_id, d.device_id, d.display_name, d.status,
-		       d.last_seen, d.firmware_version, d.ip_address, d.created_at,
+		       d.id, d.tenant_id, COALESCE(d.site_id::text, ''), d.device_id, d.display_name, d.status,
+		       d.last_seen, COALESCE(d.firmware_version, ''), COALESCE(d.ip_address::text, ''), d.created_at,
 		       e.id, e.device_id, e.type, e.port, e.label, e.protocol, e.enabled
 		FROM sessions s
 		JOIN devices d ON d.id = s.device_id
@@ -501,8 +501,8 @@ func (h *Handler) ListExportHistory(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.GetTenantID(r.Context())
 
 	const q = `
-		SELECT id, session_id, user_id, device_id, endpoint_id, tenant_id, site_id,
-		       started_at, stopped_at, stop_reason, local_bind_port, delivery_mode, metadata
+		SELECT id, COALESCE(session_id::text, ''), user_id, device_id, COALESCE(endpoint_id::text, ''), tenant_id, COALESCE(site_id::text, ''),
+		       started_at, stopped_at, COALESCE(stop_reason, ''), COALESCE(local_bind_port, 0), COALESCE(delivery_mode, ''), COALESCE(metadata, '{}'::jsonb)
 		FROM export_history
 		WHERE user_id = $1 AND tenant_id = $2
 		ORDER BY started_at DESC
@@ -560,8 +560,8 @@ func (h *Handler) resolveDeviceAndEndpoint(
 ) (*models.Device, *models.Endpoint, error) {
 	device := &models.Device{}
 	const dq = `
-		SELECT id, tenant_id, site_id, device_id, display_name, status,
-		       last_seen, firmware_version, ip_address, created_at
+		SELECT id, tenant_id, COALESCE(site_id::text, ''), device_id, display_name, status,
+		       last_seen, COALESCE(firmware_version, ''), COALESCE(ip_address::text, ''), created_at
 		FROM devices
 		WHERE device_id = $1 AND tenant_id = $2
 		LIMIT 1`
